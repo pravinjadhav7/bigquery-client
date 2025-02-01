@@ -1,0 +1,72 @@
+# Node.js dependencies
+node_modules/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Output of `npm run build`
+build/
+dist/
+
+# Typescript
+*.tsbuildinfo
+
+# Env files
+.env
+.env.local
+.env.*.local
+
+# IDEs and Editors
+.idea/
+.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+*.swp
+*.swo
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Coverage directory used by tools like jest or c8
+coverage/
+
+# Generated documentation
+docs/
+
+# Cache
+.cache/
+.cache-loader/
+.parcel-cache/
+
+# Testing files
+.jest/
+*.spec.js
+*.spec.ts
+*.test.js
+*.test.ts
+
+# Git
+.git/
+
+# Miscellaneous
+*.bak
+*.tmp
