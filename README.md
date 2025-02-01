@@ -2,8 +2,8 @@
 A feature-rich Node.js client for Google BigQuery with support for CRUD operations, transactions, query building, and advanced features like aggregate functions, pagination, and logging.
 
 ![NPM Version](https://img.shields.io/npm/v/bigquery-client)
-![License](https://img.shields.io/npm/l/bigquery-client)
-![Build Status](https://img.shields.io/github/actions/workflow/status/pravinjadhav7/bigquery-client/Build.yml)
+![License](https://img.shields.io/npm/l/bigquery-client?clear_cache=true)
+![Build Status](https://github.com/pravinjadhav7/bigquery-client/actions/workflows/Build.yml/badge.svg)
 
 ---
 
