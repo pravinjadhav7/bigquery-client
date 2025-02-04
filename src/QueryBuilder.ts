@@ -130,12 +130,16 @@ export class QueryBuilder {
      */
     join(table: string, on: Record<string, string>, type: string = 'INNER'): this {
         if (!table || Object.keys(on).length === 0) throw new Error("Join requires a valid table and condition.");
+    
+        // 🔹 Fix: Ensure correct aliasing
         const onClause = Object.entries(on)
-            .map(([key1, key2]) => `${key1} = ${key2}`)
+            .map(([left, right]) => `${left} = ${right}`)
             .join(' AND ');
+    
         this.joins.push(`${type} JOIN ${table} ON ${onClause}`);
         return this;
     }
+    
 
     /**
      * Sets the columns for the GROUP BY clause.

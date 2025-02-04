@@ -110,14 +110,11 @@ console.log(explainData);
 
 ### ✅ 3. SELECT with Query Builder
 ```typescript
-const qb = await client.select({
-  table: "users",
-  columns: ["id", "name"],
-  where: { id: 1 },
+const response = await client.select({
+  table: 'users',
+  columns: ['id', 'name', 'email'],
+  where: { user_id: 1 }
 });
-
-const { query, params } = qb.build();
-await client.query(query, params);
 ```
 
 ### ✅ 4. INSERT Data
@@ -185,24 +182,69 @@ Executing query: SELECT * FROM users
 ```
 
 ### ✅ 12. Aggregate Functions
+### ✅ 12. Aggregate Functions
+#### 1) SUM
 ```typescript
-const qb = await client.select({
-  table: "sales",
-}).selectAggregate([{ func: "SUM", column: "price" }]);
-
-const { query } = qb.build();
-await client.query(query);
-await transaction.execute();
+const response = await client.select({
+  table: "transactions",
+  columns: ["SUM(price) AS total_price"],
+  limit: 5
+});
 ```
+#### 2) COUNT
+```typescript
+const response = await client.select({
+  table: "transactions",
+  columns: ["COUNT(price)"],
+  limit: 5
+});
+```  
 
+#### 3) AVG
+```typescript
+const response = await client.select({
+  table: "transactions",
+  columns: ["users.user_id", "users.name", "AVG(price) AS avg_price"],
+  joins: [{ table: "users", on: { "transactions.user_id": "users.user_id" }}],
+  groupBy: ["users.user_id", "users.name"],
+  orderBy: [{ column: "avg_price", direction: "DESC" }],
+  limit: 5
+});
+```   
+#### 4) GROUP BY, ORDER BY, LIMIT  
+```typescript
+const response = await client.select({
+  table: 'orders',
+  columns: { 
+    'users': ['user_id', 'name'], 
+    'orders': ['order_id'],
+    'transactions': ['product', 'SUM(price) AS total_price']
+  },
+  joins: [
+    { table: 'users', on: { 'orders.user_id': 'users.user_id' } },
+    { table: 'transactions', on: { 'users.user_id': 'transactions.user_id' } }
+  ],
+  groupBy: [
+    'users.user_id', 
+    'users.name', 
+    'transactions.product', 
+    'orders.order_id'
+  ],
+  orderBy: [
+    { 
+      column: 'total_price', 
+      direction: 'DESC' 
+    }
+  ],
+  limit: 5
+});
+```
 ### ✅ 13. JSON Field Extraction
 ```typescript
 const qb = await client.select({
   table: "users",
 }).selectJsonField("metadata", "preferences.theme", "user_theme");
 
-const { query } = qb.build();
-await client.query(query);
 ```
 
 ### ✅ 13. CASE Statements
@@ -214,8 +256,6 @@ const qb = await client.select({
   { when: "pending", then: "Processing" },
 ], "Unknown", "order_status");
 
-const { query } = qb.build();
-await client.query(query);
 
 ``` 
 
@@ -225,8 +265,6 @@ const qb = await client.select({
   table: "users",
 }).whereArray("id", [1, 2, 3, 4, 5]);
 
-const { query } = qb.build();
-await client.query(query);
 ```
 
 ### 🔗 JOIN Queries 
@@ -245,8 +283,6 @@ const qb = await client.select({
   ],
 });
 
-const { query } = qb.build();
-await client.query(query);
 ```
 
 ### ✅ 2. LEFT JOIN
@@ -263,8 +299,6 @@ const qb = await client.select({
   ],
 });
 
-const { query } = qb.build();
-await client.query(query);
 ```
 
 ### ✅ 3. RIGHT JOIN
@@ -281,8 +315,6 @@ const qb = await client.select({
   ],
 });
 
-const { query } = qb.build();
-await client.query(query);
 ```
 
 ### ✅ 4. FULL JOIN
@@ -299,8 +331,6 @@ const qb = await client.select({
   ],
 });
 
-const { query } = qb.build();
-await client.query(query);
 ```
 
 ## 🛠️ Build & Publish
