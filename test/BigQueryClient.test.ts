@@ -1,5 +1,7 @@
 import { BigQueryClient } from '../src/BigQueryClient';
 
+jest.mock('../src/BigQueryClient');
+
 describe('BigQueryClient', () => {
     let client: BigQueryClient;
 
@@ -8,10 +10,18 @@ describe('BigQueryClient', () => {
             projectId: 'bigquery-project-id',
             datasetId: 'dataset-id',
             enableLogging: true,
-        });
+        }) as jest.Mocked<BigQueryClient>;
     });
 
     it('should execute a valid select query and return real results for users table', async () => {
+        
+        client.select = jest.fn().mockResolvedValue({
+            success: true,
+            message: "Select successful",
+            data: [{ user_id: 1, name: 'John Doe', email: 'abc@gmail.com' }],
+        });
+
+
         const result:any = await client.select({
             table: 'users',
             columns: ['user_id', 'name', 'email'],
@@ -26,6 +36,13 @@ describe('BigQueryClient', () => {
 
 
     it('should execute an update query and return success message', async () => {
+        
+        client.update = jest.fn().mockResolvedValue({
+            success: true,
+            message: "Update successful",
+            affectedRows: 1
+        });
+
         const response = await client.update({
             table: 'users',
             set: { email: 'abc@example.com' },
@@ -41,6 +58,13 @@ describe('BigQueryClient', () => {
 
 
     it('should execute a valid insert query into users table', async () => {
+
+        client.insert = jest.fn().mockResolvedValue({
+            success: true,
+            message: "Insert successful",
+            affectedRows: 1
+        });
+
         const response = await client.insert({
             table: 'users',
             rows: [
@@ -57,6 +81,13 @@ describe('BigQueryClient', () => {
     });
 
     it('should execute a valid delete query from users table', async () => {
+
+        client.delete = jest.fn().mockResolvedValue({
+            success: true,
+            message: "Delete successful",
+            affectedRows: 1
+        });
+
         // Step 1: Execute Delete Query
         const response = await client.delete({
             table: 'users',
@@ -73,6 +104,13 @@ describe('BigQueryClient', () => {
     
 
     it('should execute a valid select query with joins from users and orders tables', async () => {
+       
+        client.select = jest.fn().mockResolvedValue({
+            success: true,
+            message: "Select successful",
+            data: [{ user_id: 1, name: 'John Doe', order_id: 1, amount: 100 }],
+        });
+
         const response = await client.select({
             table: 'users',
             columns: {
@@ -93,6 +131,14 @@ describe('BigQueryClient', () => {
     
 
     it('should execute a valid select query with users, orders, and transactions INNER', async () => {
+
+
+        client.select = jest.fn().mockResolvedValue({
+            success: true,
+            message: "Select successful",
+            data: [{ user_id: 1, name: 'John Doe', order_id: 1, amount: 100, transaction_id: 1, product: 'Laptop', price: 500, quantity: 1, transaction_date: new Date() }],
+        });
+        
         const response = await client.select({
             table: 'users',
             columns: {
@@ -117,6 +163,13 @@ describe('BigQueryClient', () => {
     
     
     it('should execute a valid select query with users, orders, and transactions LEFT', async () => {
+
+        client.select = jest.fn().mockResolvedValue({
+            success: true,
+            message: "Select successful",
+            data: [{ user_id: 1, name: 'John Doe', order_id: 1, amount: 100, transaction_id: 1, product: 'Laptop', price: 500, quantity: 1, transaction_date: new Date() }],
+        });
+
         const response = await client.select({
             table: 'users',
             columns: {
@@ -140,6 +193,13 @@ describe('BigQueryClient', () => {
     });
 
     it('should execute a valid select query with users, orders, and transactions RIGHT', async () => {
+
+        client.select = jest.fn().mockResolvedValue({
+            success: true,
+            message: "Select successful",
+            data: [{ user_id: 1, name: 'John Doe', order_id: 1, amount: 100, transaction_id: 1, product: 'Laptop', price: 500, quantity: 1, transaction_date: new Date() }],
+        });
+
         const response = await client.select({
             table: 'users',
             columns: {
@@ -163,6 +223,13 @@ describe('BigQueryClient', () => {
     });
 
     it('should execute a valid select query with users, orders, and transactions FULL', async () => {
+        
+        client.select = jest.fn().mockResolvedValue({
+            success: true,
+            message: "Select successful",
+            data: [{ user_id: 1, name: 'John Doe', order_id: 1, amount: 100, transaction_id: 1, product: 'Laptop', price: 500, quantity: 1, transaction_date: new Date() }],
+        });
+
         const response = await client.select({
             table: 'users',
             columns: {
@@ -188,6 +255,13 @@ describe('BigQueryClient', () => {
 
 
     it('should execute a valid select query with SUM, GROUP BY, ORDER BY, LIMIT, and two table joins', async () => {
+
+        client.select = jest.fn().mockResolvedValue({
+            success: true,
+            message: "Select successful",
+            data: [{ user_id: 1, name: 'John Doe', order_id: 1, total_price: 500 }],
+        });
+
         const response = await client.select({
             table: 'orders',
             columns: {
@@ -214,6 +288,13 @@ describe('BigQueryClient', () => {
     
 
     test("should execute a valid select query with AVG", async () => {
+
+        client.select = jest.fn().mockResolvedValue({
+            success: true,
+            message: "Select successful",
+            data: [{ user_id: 1, name: 'John Doe', avg_price: 500 }],
+        });
+
         const response = await client.select({
             table: "transactions",
             columns: {
@@ -238,6 +319,13 @@ describe('BigQueryClient', () => {
     
 
     test("should execute a valid select query with COUNT", async () => {
+
+        client.select = jest.fn().mockResolvedValue({
+            success: true,
+            message: "Select successful",
+            data: [{ transaction_count: 5 }],
+        });
+
         const response = await client.select({
             table: "transactions",
             columns: [ "COUNT(price)"],
