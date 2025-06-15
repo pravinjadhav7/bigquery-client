@@ -1,21 +1,13 @@
-name: Build and Test
+name: Publish to NPM
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+  release:
+    types: [published]
 
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        node-version: [18, 20]
-
+    
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -23,18 +15,20 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 20
           registry-url: "https://registry.npmjs.org/"
           cache: 'npm'
 
       - name: Install Dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Run Build
-        run: npm run build
-
       - name: Run Tests
         run: npm test
 
-      - name: Check Package
-        run: npm pack --dry-run
+      - name: Run Build
+        run: npm run build
+
+      - name: Publish to NPM
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }} 
