@@ -1,6 +1,6 @@
 {
   "name": "bigquery-client",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "A feature-rich Node.js client for Google BigQuery with support for CRUD operations, transactions, query building, and advanced features like aggregate functions, pagination, and logging.",
   "main": "dist/index.js",
   "module": "dist/index.js",
