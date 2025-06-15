@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue.svg)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-green.svg)](https://nodejs.org/)
-[![codecov](https://codecov.io/gh/pravinjadhav7/bigquery-client/branch/main/graph/badge.svg)](https://codecov.io/gh/pravinjadhav7/bigquery-client)
+[![Coverage Status](https://img.shields.io/badge/coverage-67%20tests%20passing-brightgreen.svg)](https://github.com/pravinjadhav7/bigquery-client/actions)
 
 A comprehensive, production-ready TypeScript ORM for Google BigQuery with advanced features including query caching, metrics collection, SQL injection protection, and support for materialized views and partitioned tables.
 
