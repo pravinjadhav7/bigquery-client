@@ -460,7 +460,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/bigquery-client.git
+git clone https://github.com/pravinjadhav7/bigquery-client.git
 
 # Install dependencies
 npm install
@@ -485,10 +485,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- 📧 Email: support@bigquery-client.com
-- 🐛 Issues: [GitHub Issues](https://github.com/your-username/bigquery-client/issues)
-- 📖 Documentation: [Full Documentation](https://bigquery-client.com/docs)
-- 💬 Discussions: [GitHub Discussions](https://github.com/your-username/bigquery-client/discussions)
+- 📧 Email: pravinjadhav762@gmail.com
+- 🐛 Issues: [GitHub Issues](https://github.com/pravinjadhav7/bigquery-client/issues)
+- 💬 Discussions: [GitHub Discussions](https://github.com/pravinjadhav7/bigquery-client/discussions)
 
 ## 🗺️ Roadmap
 
@@ -501,4 +500,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Made with ❤️ by [Pravin Jadhav](https://github.com/pravinjadhav)**
+**Made with ❤️ by [Pravin Jadhav](https://github.com/pravinjadhav7)**
