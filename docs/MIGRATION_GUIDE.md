@@ -217,7 +217,7 @@ npm run build
 ```
 
 ### Getting Help
-- Check the [GitHub Issues](https://github.com/pravinjadhav/bigquery-client/issues)
+- Check the [GitHub Issues](https://github.com/pravinjadhav7/bigquery-client/issues)
 - Review the [Architecture Documentation](./ARCHITECTURE.md)
 - Look at the [Examples](../examples/)
 

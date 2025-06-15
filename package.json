@@ -87,15 +87,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/pravinjadhav/bigquery-client.git"
+    "url": "https://github.com/pravinjadhav7/bigquery-client.git"
   },
   "bugs": {
-    "url": "https://github.com/pravinjadhav/bigquery-client/issues"
+    "url": "https://github.com/pravinjadhav7/bigquery-client/issues"
   },
   "homepage": "https://github.com/pravinjadhav/bigquery-client#readme",
   "funding": {
     "type": "github",
-    "url": "https://github.com/sponsors/pravinjadhav"
+    "url": "https://github.com/sponsors/pravinjadhav7"
   },
   "publishConfig": {
     "access": "public",
