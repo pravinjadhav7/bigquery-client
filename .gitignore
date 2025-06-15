@@ -49,8 +49,8 @@ Thumbs.db
 # Coverage directory used by tools like jest or c8
 coverage/
 
-# Generated documentation
-docs/
+# Generated documentation (but allow our docs/ folder)
+# docs/
 
 # Cache
 .cache/
