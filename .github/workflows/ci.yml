@@ -35,7 +35,7 @@ jobs:
         run: npm run test:coverage
 
       - name: Upload Coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         if: matrix.node-version == 20
         with:
           file: ./coverage/lcov.info
@@ -67,7 +67,7 @@ jobs:
         run: npm pack --dry-run
 
       - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/ 
