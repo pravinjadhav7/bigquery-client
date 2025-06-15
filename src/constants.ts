@@ -1,6 +1,0 @@
- 
-export const AGGREGATE_FUNCTIONS = new Set([
-    "SUM", "AVG", "COUNT", "MIN", "MAX", "ARRAY_AGG", "STRING_AGG",
-    "BIT_AND", "BIT_OR", "BIT_XOR", "LOGICAL_AND", "LOGICAL_OR",
-    "ANY_VALUE", "COUNTIF", "GROUPING", "MAX_BY", "MIN_BY"
-]);
