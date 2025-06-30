@@ -6,6 +6,12 @@
  */
 
 import { BigQueryClient, MetricsCollector } from '../src';
+import 'reflect-metadata';
+import { Entity } from '../src/decorators/Entity';
+import { Column } from '../src/decorators/Column';
+import { Relation } from '../src/decorators/Relation';
+import { Validate } from '../src/decorators/Validate';
+import { BaseRepository } from '../src/repository/BaseRepository';
 
 async function advancedFeaturesExample() {
   // Initialize the BigQuery client with advanced configuration
@@ -169,6 +175,75 @@ async function advancedFeaturesExample() {
     console.error('Error in advanced features example:', error);
     metrics.recordError(error as Error);
   }
+}
+
+@Entity('users')
+class User {
+  @Column()
+  id!: string;
+
+  @Column('user_name')
+  @Validate((v) => typeof v === 'string' && v.length > 0, 'Name is required')
+  name!: string;
+
+  @Column()
+  email!: string;
+
+  @Relation('one-to-many', () => Order)
+  orders?: Order[];
+}
+
+@Entity('orders')
+class Order {
+  @Column()
+  id!: string;
+
+  @Column()
+  userId!: string;
+
+  @Column()
+  product!: string;
+
+  @Column()
+  amount!: number;
+
+  @Relation('many-to-one', () => User)
+  user?: User;
+}
+
+// Example: Find all users and their orders (manual join for demonstration)
+async function advancedUsageExample() {
+  const client = new BigQueryClient({
+    projectId: 'your-project-id',
+    datasetId: 'your-dataset-id',
+    enableLogging: false,
+    enableCache: false
+  });
+  const userRepository = new BaseRepository<User>(User, client);
+  const orderRepository = new BaseRepository<Order>(Order, client);
+
+  // Find all users
+  const users = await userRepository.findAll();
+  // Find all orders
+  const orders = await orderRepository.findAll();
+
+  // Simulate a join in application logic
+  const usersWithOrders = users.map((user: any) => ({
+    ...user,
+    orders: orders.filter((order: any) => order.userId === user.id)
+  }));
+
+  // Validate user names
+  const userValidations = (Reflect as any).getMetadata('validations', User) || [];
+  users.forEach(user => {
+    userValidations.forEach((rule: any) => {
+      if (!rule.validator(user[rule.propertyKey])) {
+        console.log(`Validation failed for ${rule.propertyKey}: ${rule.message}`);
+      }
+    });
+  });
+
+  console.log('Users with orders:', usersWithOrders);
 }
 
 // Run the example

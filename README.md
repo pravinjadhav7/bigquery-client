@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue.svg)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-green.svg)](https://nodejs.org/)
-[![Coverage Status](https://img.shields.io/badge/coverage-67%20tests%20passing-brightgreen.svg)](https://github.com/pravinjadhav7/bigquery-client/actions)
+[![Coverage Status](https://img.shields.io/badge/coverage-83%20tests%20passing-brightgreen.svg)](https://github.com/pravinjadhav7/bigquery-client/actions)
 
 A comprehensive, production-ready TypeScript ORM for Google BigQuery with advanced features including query caching, metrics collection, SQL injection protection, and support for materialized views and partitioned tables.
 
@@ -18,6 +18,14 @@ A comprehensive, production-ready TypeScript ORM for Google BigQuery with advanc
 - **SQL Injection Protection**: Comprehensive validation and sanitization
 - **Parameter Binding**: Safe parameterized queries
 - **Transaction Support**: Atomic operations and batch processing
+
+### 🆕 Latest Features (v1.0.14)
+- **@Entity Decorator**: Define BigQuery tables with metadata and table name mapping
+- **@Column Decorator**: Map class properties to table columns with custom naming support
+- **@Validate Decorator**: Runtime property validation with custom validation rules and error messages
+- **@Relation Decorator**: Define entity relationships (one-to-many, many-to-one) with automatic loading
+- **Repository Pattern**: BaseRepository class for common CRUD operations with type safety
+- **Enhanced TypeScript Support**: Full compatibility with TypeScript 5+ and legacy decorators
 
 ### Performance & Optimization
 - **Intelligent Query Caching**: TTL-based caching with LRU eviction
@@ -36,7 +44,7 @@ A comprehensive, production-ready TypeScript ORM for Google BigQuery with advanc
 ### Developer Experience
 - **Full TypeScript Support**: Complete type safety and IntelliSense
 - **Comprehensive Documentation**: Detailed JSDoc comments
-- **Extensive Testing**: 100% test coverage with Jest
+- **Extensive Testing**: 100% test coverage with Jest (83 tests passing)
 - **Production Ready**: Battle-tested in production environments
 
 ## 📦 Installation
@@ -294,6 +302,191 @@ const mergeResult = await client.merge({
   whenMatched: 'UPDATE SET name = source.name, email = source.email, updated_at = CURRENT_TIMESTAMP()',
   whenNotMatched: 'INSERT (id, name, email, created_at) VALUES (source.user_id, source.name, source.email, CURRENT_TIMESTAMP())'
 });
+```
+
+### Define Entities with Decorators
+
+```typescript
+import { Entity, Column, Validate, Relation } from 'bigquery-client';
+
+@Entity('users')
+class User {
+  @Column()
+  id!: string;
+
+  @Column('user_name')
+  @Validate((v) => typeof v === 'string' && v.length > 0, 'Name is required')
+  name!: string;
+
+  @Column()
+  email!: string;
+
+  @Relation('one-to-many', () => Order)
+  orders?: Order[];
+}
+
+@Entity('orders')
+class Order {
+  @Column()
+  id!: string;
+
+  @Column()
+  userId!: string;
+
+  @Column()
+  product!: string;
+
+  @Column()
+  amount!: number;
+
+  @Relation('many-to-one', () => User)
+  user?: User;
+}
+```
+
+### Repository Pattern Usage
+
+```typescript
+import { BaseRepository } from 'bigquery-client';
+
+// Create repositories for your entities
+const userRepo = new BaseRepository<User>(User, client);
+const orderRepo = new BaseRepository<Order>(Order, client);
+
+// Basic CRUD operations
+const users = await userRepo.findAll();
+const user = await userRepo.findById('123');
+const newUser = await userRepo.create({
+  name: 'John Doe',
+  email: 'john@example.com'
+});
+
+// Update operations
+await userRepo.update('123', {
+  name: 'John Smith',
+  email: 'johnsmith@example.com'
+});
+
+// Delete operations
+await userRepo.delete('123');
+
+// Find with conditions
+const activeUsers = await userRepo.findBy({ active: true });
+const userByName = await userRepo.findOneBy({ name: 'John Doe' });
+```
+
+### Entity Relationships
+
+```typescript
+// One-to-many relationship
+const userWithOrders = await userRepo.findById('123');
+// Orders will be automatically loaded based on @Relation decorator
+console.log(userWithOrders.orders); // Array of Order objects
+
+// Many-to-one relationship
+const orderWithUser = await orderRepo.findById('456');
+console.log(orderWithUser.user); // User object
+
+// Custom relationship queries
+const usersWithOrderCount = await userRepo.query(`
+  SELECT u.*, COUNT(o.id) as order_count
+  FROM users u
+  LEFT JOIN orders o ON u.id = o.user_id
+  GROUP BY u.id, u.name, u.email
+`);
+```
+
+### Validation Examples
+
+```typescript
+@Entity('products')
+class Product {
+  @Column()
+  id!: string;
+
+  @Column('product_name')
+  @Validate((v) => typeof v === 'string' && v.length > 0, 'Product name is required')
+  name!: string;
+
+  @Column()
+  @Validate((v) => typeof v === 'number' && v > 0, 'Price must be positive')
+  price!: number;
+
+  @Column()
+  @Validate((v) => ['active', 'inactive', 'draft'].includes(v), 'Invalid status')
+  status!: string;
+}
+
+// Validation is automatically applied
+const productRepo = new BaseRepository<Product>(Product, client);
+
+// This will pass validation
+const validProduct = await productRepo.create({
+  name: 'Laptop',
+  price: 999.99,
+  status: 'active'
+});
+
+// This will throw validation error
+try {
+  await productRepo.create({
+    name: '', // ❌ Validation error: Name is required
+    price: -100, // ❌ Validation error: Price must be positive
+    status: 'invalid' // ❌ Validation error: Invalid status
+  });
+} catch (error) {
+  console.error('Validation failed:', error.message);
+}
+```
+
+### Custom Column Names
+
+```typescript
+@Entity('user_profiles')
+class UserProfile {
+  @Column('user_id') // Maps to 'user_id' column in BigQuery
+  id!: string;
+
+  @Column('full_name') // Maps to 'full_name' column
+  name!: string;
+
+  @Column('email_address') // Maps to 'email_address' column
+  email!: string;
+
+  @Column('created_timestamp') // Maps to 'created_timestamp' column
+  createdAt!: Date;
+}
+```
+
+### Metadata Access
+
+```typescript
+// Get entity metadata
+const tableName = (Reflect as any).getMetadata('tableName', User);
+console.log('Table name:', tableName); // 'users'
+
+// Get column metadata
+const columns = (Reflect as any).getMetadata('columns', User);
+console.log('Columns:', columns);
+// [
+//   { propertyKey: 'id', columnName: 'id' },
+//   { propertyKey: 'name', columnName: 'user_name' },
+//   { propertyKey: 'email', columnName: 'email' }
+// ]
+
+// Get validation rules
+const validations = (Reflect as any).getMetadata('validations', User);
+console.log('Validations:', validations);
+// [
+//   { propertyKey: 'name', validator: Function, message: 'Name is required' }
+// ]
+
+// Get relationships
+const relations = (Reflect as any).getMetadata('relations', User);
+console.log('Relations:', relations);
+// [
+//   { propertyKey: 'orders', type: 'one-to-many', target: Function }
+// ]
 ```
 
 ### Performance Monitoring

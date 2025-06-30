@@ -5,7 +5,11 @@
  * including CRUD operations, caching, and error handling.
  */
 
-import { BigQueryClient } from '../src';
+import 'reflect-metadata';
+import { Entity } from '../src/decorators/Entity';
+import { Column } from '../src/decorators/Column';
+import { BaseRepository } from '../src/repository/BaseRepository';
+import { BigQueryClient } from '../src/core/BigQueryClient';
 
 async function basicUsageExample() {
   // Initialize the BigQuery client
@@ -99,6 +103,30 @@ async function basicUsageExample() {
     console.error('Error in basic usage example:', error);
   }
 }
+
+@Entity('users')
+class User {
+  @Column()
+  id!: string;
+
+  @Column('user_name')
+  name!: string;
+
+  @Column()
+  email!: string;
+}
+
+// Usage example:
+const client = new BigQueryClient({
+  projectId: 'your-project-id',
+  datasetId: 'your-dataset-id',
+  enableLogging: false,
+  enableCache: false
+});
+const userRepository = new BaseRepository<User>(User, client);
+userRepository.findAll().then(result => {
+  console.log('Users:', result);
+});
 
 // Run the example
 if (require.main === module) {

@@ -60,7 +60,8 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@google-cloud/bigquery": ">=8.1.0",
+    "@google-cloud/bigquery": ">=7.0.0",
+    "reflect-metadata": "^0.1.14",
     "winston": "^3.17.0"
   },
   "devDependencies": {
@@ -125,7 +126,10 @@
     ],
     "transform": {
       "^.+\\.ts$": "ts-jest"
-    }
+    },
+    "setupFiles": [
+      "reflect-metadata"
+    ]
   },
   "prettier": {
     "semi": true,
