@@ -1,29 +1,32 @@
-/**
- * BigQuery Client ORM - Main Entry Point
- * 
- * A comprehensive TypeScript ORM for Google BigQuery with advanced features
- * including intelligent caching, performance monitoring, and security validation.
- * 
- * @version 1.0.6
- * @author Pravin Jadhav
- * @license MIT
- * 
- * @example
- * ```typescript
- * import { BigQueryClient } from 'bigquery-client';
- * 
- * const client = new BigQueryClient({
- *   projectId: 'your-project-id',
- *   keyFilename: 'path/to/service-account.json'
- * });
- * 
- * // Execute queries with intelligent caching
- * const users = await client.select('users', ['id', 'name'], { active: true });
- * ```
- */
-
 // Core functionality
-export { BigQueryClient, QueryBuilder, Pool, Transaction } from './core';
+export { BigQueryClient, QueryBuilder, Pool, Transaction, TableManager } from './core';
+export type { TableInfo, DatasetInfo, CopyTableOptions, ExportOptions, LoadOptions } from './core';
+
+// Repository
+export { BaseRepository } from './repository';
+export type { FindOptions, PaginationResult } from './repository';
+
+// Decorators
+export {
+  Entity, Column, PrimaryColumn,
+  Relation, OneToOne, OneToMany, ManyToOne, ManyToMany,
+  Validate,
+  CreatedAt, UpdatedAt, SoftDelete,
+  Index, Unique,
+  Nullable, Required, Default,
+  BeforeInsert, AfterInsert, BeforeUpdate, AfterUpdate, BeforeDelete, AfterDelete
+} from './decorators';
+export type { RelationType, RelationOptions, IndexOptions } from './decorators';
+
+// Schema & Migration
+export { SchemaBuilder } from './schema';
+export type { BigQueryType, FieldMode, SchemaField, TableOptions } from './schema';
+export { BaseMigration, MigrationRunner } from './migration';
+export type { Migration, MigrationRecord, MigrationRunnerConfig } from './migration';
+
+// Events
+export { BigQueryEventEmitter } from './events';
+export type { EventType, QueryEvent, EntityEvent, EventCallback } from './events';
 
 // Library utilities
 export { QueryCache } from './lib/cache';

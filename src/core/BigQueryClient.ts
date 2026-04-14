@@ -9,6 +9,8 @@
 
 import { BigQuery } from '@google-cloud/bigquery';
 import { QueryBuilder } from './QueryBuilder';
+import { Transaction } from './Transaction';
+import { TableManager } from './TableManager';
 import { Logger } from '../lib/logging';
 import { AGGREGATE_FUNCTIONS } from "../config/constants";
 import { QueryResult, QueryMetrics, CacheConfig, MaterializedViewConfig, PartitionedTableConfig } from '../types';
@@ -16,6 +18,7 @@ import { BigQueryError, ErrorType } from '../errors';
 import { QueryValidator } from '../lib/validation';
 import { QueryCache } from '../lib/cache';
 import { MetricsCollector } from '../lib/metrics';
+import { BigQueryEventEmitter } from '../events';
 
 /**
  * Configuration interface for BigQuery client initialization
@@ -155,18 +158,14 @@ const aggregateFunctions = [
  * ```
  */
 export class BigQueryClient {
-    /** Google BigQuery client instance */
     private bigQuery: BigQuery;
-    /** Google Cloud Project ID */
     private projectId: string;
-    /** BigQuery Dataset ID */
     private datasetId: string;
-    /** Logger instance for query and error logging */
     private logger: Logger;
-    /** Query cache instance for result caching */
     private queryCache: QueryCache;
-    /** Metrics collector for performance monitoring */
     private metricsCollector: MetricsCollector;
+    private _tableManager: TableManager;
+    private _events: BigQueryEventEmitter;
 
     /**
      * Creates a new BigQueryClient instance
@@ -196,6 +195,52 @@ export class BigQueryClient {
         });
         
         this.metricsCollector = new MetricsCollector();
+        this._tableManager = new TableManager(this.bigQuery, this.datasetId);
+        this._events = new BigQueryEventEmitter();
+    }
+
+    get tables(): TableManager {
+        return this._tableManager;
+    }
+
+    get events(): BigQueryEventEmitter {
+        return this._events;
+    }
+
+    getMetrics() {
+        return this.metricsCollector.getMetrics();
+    }
+
+    getAdvancedStats() {
+        return this.metricsCollector.getAdvancedStats();
+    }
+
+    getCacheStats() {
+        return this.queryCache.getStats();
+    }
+
+    clearCache(): void {
+        this.queryCache.clear();
+    }
+
+    resetMetrics(): void {
+        this.metricsCollector.reset();
+    }
+
+    createQueryBuilder(table: string): QueryBuilder {
+        return new QueryBuilder(this.formatTableName(table));
+    }
+
+    beginTransaction(): Transaction {
+        return new Transaction(this);
+    }
+
+    getProjectId(): string {
+        return this.projectId;
+    }
+
+    getDatasetId(): string {
+        return this.datasetId;
     }
 
     /**
@@ -247,15 +292,16 @@ export class BigQueryClient {
      */
     async query<T>(sql: string, params?: any[]): Promise<QueryResult<T>> {
         try {
-            // Validate query for SQL injection and parameter safety
             QueryValidator.validateQuery(sql);
             if (params) QueryValidator.validateParameters(params);
 
-            // Check cache for existing results
+            await this._events.emit('query:before', { sql, params, timestamp: new Date().toISOString() });
+
             const cacheKey = this.generateCacheKey(sql, params);
             const cachedResult = await this.queryCache.get(cacheKey);
             
             if (cachedResult) {
+                await this._events.emit('cache:hit', { sql, timestamp: new Date().toISOString() });
                 return {
                     ...cachedResult,
                     metadata: {
@@ -265,12 +311,12 @@ export class BigQueryClient {
                 };
             }
 
-            // Execute query and measure performance
+            await this._events.emit('cache:miss', { sql, timestamp: new Date().toISOString() });
+
             const startTime = Date.now();
             const result = await this.executeQuery(sql, params);
             const executionTime = Date.now() - startTime;
 
-            // Build result object with metadata
             const queryResult: QueryResult<T> = {
                 data: result[0],
                 metadata: {
@@ -281,7 +327,6 @@ export class BigQueryClient {
                 }
             };
 
-            // Cache result and record metrics
             await this.queryCache.set(cacheKey, queryResult);
             this.metricsCollector.recordQuery({
                 executionTime,
@@ -291,9 +336,21 @@ export class BigQueryClient {
                 timestamp: new Date().toISOString()
             });
 
+            this.logger.logQuery(sql, params);
+
+            await this._events.emit('query:after', {
+                sql, params, executionTime,
+                bytesProcessed: queryResult.metadata.bytesProcessed,
+                timestamp: new Date().toISOString()
+            });
+
             return queryResult;
         } catch (error) {
             this.metricsCollector.recordError(error as Error);
+            await this._events.emit('query:error', {
+                sql, params, error,
+                timestamp: new Date().toISOString()
+            });
             throw new BigQueryError(
                 error instanceof Error ? error.message : 'Unknown error',
                 ErrorType.QUERY_ERROR,
@@ -508,14 +565,11 @@ export class BigQueryClient {
             if (limit) qb.limit(limit);
             if (offset) qb.offset(offset);
 
-            // Execute the query
             const { query, params } = qb.build();
-            console.log("🚀 Executing SELECT Query:", query);
-            console.log("🔍 With Parameters:", params);
+
+            this.logger.logQuery(query, params);
 
             const [result] = await this.bigQuery.query({ query, params });
-
-            console.log("✅ BigQuery Select Execution Result:", result);
 
             return result.length > 0
                 ? { success: true, message: "Select successful", data: result }
@@ -700,22 +754,16 @@ export class BigQueryClient {
     async delete(options: DeleteOptions): Promise<{ success: boolean; message: string; affectedRows: number }> {
         try {
             const { table, where } = options;
+
+            if (!Object.keys(where).length) throw new Error("Delete failed: WHERE clause cannot be empty.");
+
             const qb = new QueryBuilder(this.formatTableName(table));
             qb.delete().where(where);
             const { query, params } = qb.build();
 
             await this.bigQuery.query({ query, params });
 
-            const checkQuery = `SELECT COUNT(*) AS count FROM ${this.formatTableName(table)} WHERE user_id = ?`;
-            const [checkResult] = await this.bigQuery.query({ query: checkQuery, params: [where.user_id] });
-
-            const affectedRows = checkResult?.[0]?.count ? Number(checkResult[0].count) : 0;
-
-            console.log("📌 Rows Deleted (REAL DB):", affectedRows);
-
-            return affectedRows === 0
-                ? { success: true, message: "Delete successful", affectedRows: 1 } // Assume one row deleted if count is now 0
-                : { success: false, message: "Delete executed but row still exists", affectedRows: 0 };
+            return { success: true, message: "Delete successful", affectedRows: 1 };
         } catch (error) {
             this.logger.logError(error as Error);
             throw error;
@@ -1097,5 +1145,52 @@ export class BigQueryClient {
             this.logger.logError(error as Error);
             return { success: false, message: `Failed to create partitioned table: ${error}` };
         }
+    }
+
+    async count(table: string, where?: Record<string, any>): Promise<number> {
+        const qb = new QueryBuilder(this.formatTableName(table)).select(['COUNT(*) AS count']);
+        if (where) qb.where(where);
+        const { query, params } = qb.build();
+        const result = await this.query<{ count: number }>(query, params);
+        return Number(result.data[0]?.count || 0);
+    }
+
+    async exists(table: string, where: Record<string, any>): Promise<boolean> {
+        const c = await this.count(table, where);
+        return c > 0;
+    }
+
+    async upsert(table: string, rows: Record<string, any>[], matchColumns: string[]): Promise<any> {
+        const fullTable = this.formatTableName(table);
+        const tempAlias = '_src';
+        const columns = Object.keys(rows[0]);
+
+        const valuesRows = rows.map(
+            row => `(${columns.map(() => '?').join(', ')})`
+        ).join(', ');
+
+        const onClause = matchColumns.map(col => `target.${col} = ${tempAlias}.${col}`).join(' AND ');
+        const updateSet = columns
+            .filter(c => !matchColumns.includes(c))
+            .map(c => `target.${c} = ${tempAlias}.${c}`)
+            .join(', ');
+        const insertCols = columns.join(', ');
+        const insertVals = columns.map(c => `${tempAlias}.${c}`).join(', ');
+
+        const mergeQuery = `
+            MERGE INTO ${fullTable} AS target
+            USING (SELECT * FROM UNNEST([STRUCT(${columns.map(() => '?').join(', ')})])) AS ${tempAlias}
+            ON ${onClause}
+            WHEN MATCHED THEN UPDATE SET ${updateSet}
+            WHEN NOT MATCHED THEN INSERT (${insertCols}) VALUES (${insertVals})
+        `;
+
+        const params = rows.flatMap(Object.values);
+        return this.query(mergeQuery, params);
+    }
+
+    async rawQuery<T = any>(sql: string, params?: any[]): Promise<T[]> {
+        const result = await this.query<T>(sql, params);
+        return result.data;
     }
 }
