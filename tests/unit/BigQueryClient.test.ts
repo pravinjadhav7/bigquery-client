@@ -1,68 +1,75 @@
 import { BigQueryClient } from '../../src/core/BigQueryClient';
 import { Logger } from '../../src/lib/logging/Logger';
 import { Pool } from '../../src/core/Pool';
-import { QueryCache } from '../../src/lib/cache/cache';
-import { MetricsCollector } from '../../src/lib/metrics/metrics';
+import { mockBigQuery } from '../helpers/mockBigQuery';
 
-// Mock the BigQuery library
-jest.mock('@google-cloud/bigquery', () => ({
-  BigQuery: jest.fn().mockImplementation(() => ({
-    dataset: jest.fn().mockReturnValue({
-      table: jest.fn().mockReturnValue({
-        insert: jest.fn().mockResolvedValue([{}]),
-        get: jest.fn().mockResolvedValue([{}, {}]),
-        create: jest.fn().mockResolvedValue([{}, {}])
-      }),
-      create: jest.fn().mockResolvedValue([{}, {}])
-    }),
-    query: jest.fn().mockResolvedValue([
-      [{ user_id: 1, name: 'John Doe', email: 'john@example.com' }],
-      { totalBytesProcessed: '1024' }
-    ])
-  }))
-}));
+// Only the SDK is mocked (see tests/helpers/mockBigQuery.ts); BigQueryClient runs for real.
+jest.mock('@google-cloud/bigquery', () => require('../helpers/mockBigQuery').sdkModule);
+
+const T = (name: string) => `\`test-project.test-dataset.${name}\``;
 
 describe('BigQueryClient', () => {
     let client: BigQueryClient;
 
     beforeEach(() => {
+        mockBigQuery.reset();
+        jest.spyOn(console, 'log').mockImplementation(() => undefined);
         client = new BigQueryClient({
             projectId: 'test-project',
             datasetId: 'test-dataset'
         });
     });
 
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
     describe('Caching', () => {
-        it('should cache query results when caching is enabled', async () => {
+        it('should serve the second identical query from cache when caching is enabled', async () => {
+            const clientWithCache = new BigQueryClient({
+                projectId: 'test-project',
+                datasetId: 'test-dataset',
+                enableCache: true
+            });
+            mockBigQuery.queueQueryResult([{ user_id: 1 }]);
+
+            const query = 'SELECT * FROM users';
+            const result1 = await clientWithCache.query(query);
+            const result2 = await clientWithCache.query(query);
+
+            expect(mockBigQuery.queries).toHaveLength(1);
+            expect(result1.data).toEqual([{ user_id: 1 }]);
+            expect(result2.data).toEqual([{ user_id: 1 }]);
+            // cacheHit is set at runtime but missing from the QueryResult type (additive fix for 1.x)
+            expect((result2.metadata as any).cacheHit).toBe(true);
+        });
+
+        it('should hit BigQuery on every call when caching is disabled', async () => {
+            const clientWithoutCache = new BigQueryClient({
+                projectId: 'test-project',
+                datasetId: 'test-dataset',
+                enableCache: false
+            });
+            mockBigQuery.queueQueryResult([{ user_id: 1 }]).queueQueryResult([{ user_id: 1 }]);
+
+            const query = 'SELECT * FROM users';
+            await clientWithoutCache.query(query);
+            await clientWithoutCache.query(query);
+
+            expect(mockBigQuery.queries).toHaveLength(2);
+        });
+
+        it('should not share cache entries between different params', async () => {
             const clientWithCache = new BigQueryClient({
                 projectId: 'test-project',
                 datasetId: 'test-dataset',
                 enableCache: true
             });
 
-            const query = 'SELECT * FROM users';
-            const result1 = await clientWithCache.query(query);
-            const result2 = await clientWithCache.query(query);
-            
-            expect(result1).toBeDefined();
-            expect(result2).toBeDefined();
-            // Since we're using mocks, we can't test actual caching behavior
-            // but we can verify the queries execute
-        });
+            await clientWithCache.query('SELECT * FROM users WHERE user_id = ?', [1]);
+            await clientWithCache.query('SELECT * FROM users WHERE user_id = ?', [2]);
 
-        it('should not use cache when caching is disabled', async () => {
-            const clientWithoutCache = new BigQueryClient({
-                projectId: 'test-project',
-                datasetId: 'test-dataset',
-                enableCache: false
-            });
-
-            const query = 'SELECT * FROM users';
-            const result1 = await clientWithoutCache.query(query);
-            const result2 = await clientWithoutCache.query(query);
-            
-            expect(result1).toBeDefined();
-            expect(result2).toBeDefined();
+            expect(mockBigQuery.queries.map(q => q.params)).toEqual([[1], [2]]);
         });
     });
 
@@ -75,8 +82,9 @@ describe('BigQueryClient', () => {
             };
 
             const result = await client.createMaterializedView(config);
-            expect(result).toBeDefined();
             expect(result.success).toBe(true);
+            expect(mockBigQuery.lastQuery()?.sql).toContain(`CREATE MATERIALIZED VIEW ${T('test_view')}`);
+            expect(mockBigQuery.lastQuery()?.sql).toContain('SELECT * FROM users');
         });
 
         it('should create partitioned materialized view', async () => {
@@ -89,8 +97,34 @@ describe('BigQueryClient', () => {
             };
 
             const result = await client.createMaterializedView(config);
-            expect(result).toBeDefined();
             expect(result.success).toBe(true);
+            expect(mockBigQuery.lastQuery()?.sql).toContain('PARTITION BY date');
+        });
+
+        // TODO(bug: materialized-view-refresh-ddl): emits `REFRESH EVERY <interval>`, which is not
+        // BigQuery syntax (refresh is configured through OPTIONS(refresh_interval_minutes=...)).
+        test.failing('should not emit REFRESH EVERY in materialized view DDL', async () => {
+            await client.createMaterializedView({
+                name: 'test_view',
+                query: 'SELECT * FROM users',
+                refreshInterval: '1h'
+            });
+
+            expect(mockBigQuery.lastQuery()!.sql).not.toMatch(/REFRESH EVERY/i);
+        });
+
+        // TODO(bug: materialized-view-partition-order): PARTITION BY is appended after the
+        // AS <query> clause; BigQuery requires it before AS.
+        test.failing('should place PARTITION BY before the AS <query> clause', async () => {
+            await client.createMaterializedView({
+                name: 'test_view',
+                query: 'SELECT * FROM users',
+                refreshInterval: '1h',
+                partitionField: 'date'
+            });
+
+            const sql = mockBigQuery.lastQuery()!.sql!;
+            expect(sql.indexOf('PARTITION BY')).toBeLessThan(sql.search(/\bAS\s+SELECT/i));
         });
     });
 
@@ -107,23 +141,42 @@ describe('BigQueryClient', () => {
             };
 
             const result = await client.createPartitionedTable(config);
-            expect(result).toBeDefined();
             expect(result.success).toBe(true);
+            const sql = mockBigQuery.lastQuery()!.sql!;
+            expect(sql).toContain(`CREATE TABLE ${T('test_table')}`);
+            expect(sql).toContain('(date DATE, value INTEGER)');
+        });
+
+        // TODO(bug: partitioned-table-ddl): emits `PARTITION BY TIME(date)`; BigQuery has no TIME()
+        // partition function (partition by the DATE column, DATE(ts), or TIMESTAMP_TRUNC(ts, ...)).
+        test.failing('should not emit PARTITION BY TIME(...) for time partitioning', async () => {
+            await client.createPartitionedTable({
+                name: 'test_table',
+                schema: { date: 'DATE' },
+                partitionField: 'date',
+                partitionType: 'TIME'
+            });
+
+            expect(mockBigQuery.lastQuery()!.sql).not.toMatch(/PARTITION BY\s+TIME\s*\(/i);
         });
     });
 
     describe('Error Handling', () => {
         it('should handle query validation errors', async () => {
             await expect(client.query('')).rejects.toThrow();
+            expect(mockBigQuery.calls).toHaveLength(0);
         });
 
         it('should handle parameter validation errors', async () => {
             await expect(client.query('SELECT * FROM users', [null])).rejects.toThrow();
+            expect(mockBigQuery.calls).toHaveLength(0);
         });
     });
 
     describe('Basic Operations', () => {
         it('should execute a select query', async () => {
+            mockBigQuery.queueQueryResult([{ user_id: 1, name: 'John Doe' }]);
+
             const result = await client.select({
                 table: 'users',
                 columns: ['user_id', 'name'],
@@ -131,9 +184,22 @@ describe('BigQueryClient', () => {
                     user_id: 1
                 }
             });
-            
-            expect(result).toBeDefined();
-            expect(result.success).toBe(true);
+
+            expect(result).toEqual({
+                success: true,
+                message: 'Select successful',
+                data: [{ user_id: 1, name: 'John Doe' }]
+            });
+            expect(mockBigQuery.lastQuery()).toMatchObject({
+                sql: `SELECT u.user_id, u.name FROM ${T('users')} AS u WHERE u.user_id = ?`,
+                params: [1]
+            });
+        });
+
+        it('should report no records found when select returns zero rows', async () => {
+            const result = await client.select({ table: 'users', columns: ['user_id'] });
+
+            expect(result).toEqual({ success: false, message: 'No records found', data: [] });
         });
 
         it('should execute an update query', async () => {
@@ -146,9 +212,20 @@ describe('BigQueryClient', () => {
                     user_id: 1
                 }
             });
-            
-            expect(result).toBeDefined();
+
             expect(result.success).toBe(true);
+            expect(mockBigQuery.queries).toHaveLength(1);
+            expect(mockBigQuery.lastQuery()).toMatchObject({
+                sql: `UPDATE ${T('users')} SET name = ? WHERE user_id = ?`,
+                params: ['John Doe', 1]
+            });
+        });
+
+        it('should reject an update with an empty WHERE clause without calling BigQuery', async () => {
+            await expect(client.update({ table: 'users', set: { name: 'x' }, where: {} })).rejects.toThrow(
+                'WHERE clause cannot be empty'
+            );
+            expect(mockBigQuery.calls).toHaveLength(0);
         });
 
         it('should execute an insert query', async () => {
@@ -160,112 +237,109 @@ describe('BigQueryClient', () => {
                     email: 'john@example.com'
                 }]
             });
-            
-            expect(result).toBeDefined();
-            expect(result.success).toBe(true);
+
+            expect(result).toEqual({ success: true, message: 'Insert successful', affectedRows: 1 });
+            expect(mockBigQuery.lastQuery()).toMatchObject({
+                sql: `INSERT INTO ${T('users')} (user_id, name, email) VALUES (?, ?, ?)`,
+                params: [1, 'John Doe', 'john@example.com']
+            });
+        });
+
+        it('should return success:false when the insert fails at BigQuery', async () => {
+            mockBigQuery.queueQueryError(new Error('quota exceeded'));
+
+            const result = await client.insert({ table: 'users', rows: [{ user_id: 1 }] });
+
+            expect(result).toEqual({ success: false, message: 'Insert failed', affectedRows: 0 });
         });
 
         it('should execute a delete query', async () => {
+            mockBigQuery.queueQueryResult([]).queueQueryResult([{ count: 0 }]);
+
             const result = await client.delete({
                 table: 'users',
                 where: {
                     user_id: 1
                 }
             });
-            
-            expect(result).toBeDefined();
+
             expect(result.success).toBe(true);
+            expect(mockBigQuery.queries[0]).toMatchObject({
+                sql: `DELETE FROM ${T('users')} WHERE user_id = ?`,
+                params: [1]
+            });
+        });
+
+        // TODO(bug: delete-hardcoded-user-id): the post-delete verification query is hardcoded to
+        // `WHERE user_id = ?` with params [where.user_id], so deleting by any other column sends
+        // `user_id = ?` with an undefined param (and verifies the wrong thing).
+        test.failing('should not hardcode user_id in the post-delete check when deleting by another column', async () => {
+            mockBigQuery.queueQueryResult([]).queueQueryResult([{ count: 0 }]);
+
+            await client.delete({ table: 'orders', where: { order_id: 7 } });
+
+            for (const q of mockBigQuery.queries) {
+                expect(q.sql).not.toContain('user_id');
+                expect(q.params).not.toContain(undefined);
+            }
         });
     });
 
-    it('should execute a valid select query with joins from users and orders tables', async () => {
-        client.select = jest.fn().mockResolvedValue({
-            success: true,
-            message: "Select successful",
-            data: [{ user_id: 1, name: 'John Doe', order_id: 1, amount: 100 }],
+    describe('Explain and batch operations', () => {
+        it('should run explain as a dry-run job with params', async () => {
+            const metadata = await client.explain('SELECT * FROM users WHERE user_id = ?', [1]);
+
+            expect(metadata).toMatchObject({ dryRun: true });
+            expect(mockBigQuery.callsOf('createQueryJob')[0].options).toEqual({
+                query: 'SELECT * FROM users WHERE user_id = ?',
+                dryRun: true,
+                params: [1]
+            });
         });
 
-        const response = await client.select({
-            table: 'users',
-            columns: {
-                'users': ['user_id', 'name'],
-                'orders': ['order_id', 'amount']
-            },
-            joins: [{ table: 'orders', on: { 'user_id': 'user_id' } }],
-            where: { 'users.user_id': 1 }
-        });
-    
-        console.log("Select Response:", response);
-    
-        expect(response.success).toBe(true);
-        expect(response.message).toBe("Select successful");
-        expect(Array.isArray(response.data)).toBe(true);
-    });
-    
-    it('should execute a valid select query with users, orders, and transactions INNER', async () => {
-        client.select = jest.fn().mockResolvedValue({
-            success: true,
-            message: "Select successful",
-            data: [{ user_id: 1, name: 'John Doe', order_id: 1, amount: 100, transaction_id: 1, product: 'Laptop', price: 500, quantity: 1, transaction_date: new Date() }],
-        });
-        
-        const response = await client.select({
-            table: 'users',
-            columns: {
-                'users': ['user_id', 'name'],
-                'orders': ['order_id', 'amount'],
-                'transactions': ['transaction_id', 'product', 'price', 'quantity', 'transaction_date']
-            },
-            joins: [
-                { table: 'orders', on: { 'users.user_id': 'orders.user_id' } },  
-                { table: 'transactions', on: { 'users.user_id': 'transactions.user_id' } }
-            ],
-            where: { 'users.user_id': 1 }
-        });
-    
-        console.log("Select Response:", response);
-    
-        expect(response.success).toBe(true);
-        expect(response.message).toBe("Select successful");
-        expect(Array.isArray(response.data)).toBe(true);
-    });
-    
-    it('should execute a valid select query with users, orders, and transactions LEFT', async () => {
-        client.select = jest.fn().mockResolvedValue({
-            success: true,
-            message: "Select successful",
-            data: [{ user_id: 1, name: 'John Doe', order_id: 1, amount: 100, transaction_id: 1, product: 'Laptop', price: 500, quantity: 1, transaction_date: new Date() }],
+        it('should batch insert rows through the table insert API', async () => {
+            await client.batchInsert('users', [{ user_id: 1 }, { user_id: 2 }]);
+
+            expect(mockBigQuery.callsOf('table.insert')[0]).toMatchObject({
+                dataset: 'test-dataset',
+                table: 'users',
+                rows: [{ user_id: 1 }, { user_id: 2 }]
+            });
         });
 
-        const response = await client.select({
-            table: 'users',
-            columns: {
-                'users': ['user_id', 'name'],
-                'orders': ['order_id', 'amount'],
-                'transactions': ['transaction_id', 'product', 'price', 'quantity', 'transaction_date']
-            },
-            joins: [
-                { table: 'orders', on: { 'users.user_id': 'orders.user_id' } , type: 'LEFT'},  
-                { table: 'transactions', on: { 'users.user_id': 'transactions.user_id' }, type:'LEFT' }
-            ],
-            where: { 'users.user_id': 1 }
+        it('should reject batchInsert of zero rows without calling BigQuery', async () => {
+            await expect(client.batchInsert('users', [])).rejects.toThrow('No rows to insert');
+            expect(mockBigQuery.calls).toHaveLength(0);
         });
-    
-        console.log("Select Response:", response);
-    
-        expect(response.success).toBe(true);
-        expect(response.message).toBe("Select successful");
-        expect(Array.isArray(response.data)).toBe(true);
     });
 
-    it('should execute a valid select query with users, orders, and transactions RIGHT', async () => {
-        client.select = jest.fn().mockResolvedValue({
-            success: true,
-            message: "Select successful",
-            data: [{ user_id: 1, name: 'John Doe', order_id: 1, amount: 100, transaction_id: 1, product: 'Laptop', price: 500, quantity: 1, transaction_date: new Date() }],
+    describe('select with joins and aggregates', () => {
+        const rows = [{ any: 'row' }];
+        beforeEach(() => {
+            mockBigQuery.queueQueryResult(rows);
         });
 
-        const response = await client.select({
+        it('should execute a valid select query with joins from users and orders tables', async () => {
+            const response = await client.select({
+                table: 'users',
+                columns: {
+                    'users': ['user_id', 'name'],
+                    'orders': ['order_id', 'amount']
+                },
+                joins: [{ table: 'orders', on: { 'user_id': 'user_id' } }],
+                where: { 'users.user_id': 1 }
+            });
+
+            expect(response).toEqual({ success: true, message: 'Select successful', data: rows });
+            expect(mockBigQuery.lastQuery()).toMatchObject({
+                sql:
+                    `SELECT u.user_id, u.name, o.order_id, o.amount FROM ${T('users')} AS u ` +
+                    `INNER JOIN ${T('orders')} AS o ON u.user_id = o.user_id WHERE u.user_id = ?`,
+                params: [1]
+            });
+        });
+
+        const threeTable = (type?: 'LEFT' | 'RIGHT' | 'FULL') => ({
             table: 'users',
             columns: {
                 'users': ['user_id', 'name'],
@@ -273,125 +347,100 @@ describe('BigQueryClient', () => {
                 'transactions': ['transaction_id', 'product', 'price', 'quantity', 'transaction_date']
             },
             joins: [
-                { table: 'orders', on: { 'users.user_id': 'orders.user_id' } , type: 'RIGHT'},  
-                { table: 'transactions', on: { 'users.user_id': 'transactions.user_id' }, type:'RIGHT' }
+                { table: 'orders', on: { 'users.user_id': 'orders.user_id' }, ...(type && { type }) },
+                { table: 'transactions', on: { 'users.user_id': 'transactions.user_id' }, ...(type && { type }) }
             ],
             where: { 'users.user_id': 1 }
         });
-    
-        console.log("Select Response:", response);
-    
-        expect(response.success).toBe(true);
-        expect(response.message).toBe("Select successful");
-        expect(Array.isArray(response.data)).toBe(true);
-    });
 
-    it('should execute a valid select query with users, orders, and transactions FULL', async () => {
-        client.select = jest.fn().mockResolvedValue({
-            success: true,
-            message: "Select successful",
-            data: [{ user_id: 1, name: 'John Doe', order_id: 1, amount: 100, transaction_id: 1, product: 'Laptop', price: 500, quantity: 1, transaction_date: new Date() }],
+        it.each([
+            ['INNER', undefined],
+            ['LEFT', 'LEFT'],
+            ['RIGHT', 'RIGHT'],
+            ['FULL', 'FULL']
+        ] as const)('should execute a valid select query with users, orders, and transactions %s', async (joinType, type) => {
+            const response = await client.select(threeTable(type));
+
+            expect(response).toEqual({ success: true, message: 'Select successful', data: rows });
+            expect(mockBigQuery.lastQuery()).toMatchObject({
+                sql:
+                    `SELECT u.user_id, u.name, o.order_id, o.amount, ` +
+                    `t.transaction_id, t.product, t.price, t.quantity, t.transaction_date ` +
+                    `FROM ${T('users')} AS u ` +
+                    `${joinType} JOIN ${T('orders')} AS o ON u.user_id = o.user_id ` +
+                    `${joinType} JOIN ${T('transactions')} AS t ON u.user_id = t.user_id ` +
+                    `WHERE u.user_id = ?`,
+                params: [1]
+            });
         });
 
-        const response = await client.select({
-            table: 'users',
-            columns: {
-                'users': ['user_id', 'name'],
-                'orders': ['order_id', 'amount'],
-                'transactions': ['transaction_id', 'product', 'price', 'quantity', 'transaction_date']
-            },
-            joins: [
-                { table: 'orders', on: { 'users.user_id': 'orders.user_id' } , type: 'FULL'},  
-                { table: 'transactions', on: { 'users.user_id': 'transactions.user_id' }, type:'FULL' }
-            ],
-            where: { 'users.user_id': 1 }
-        });
-    
-        console.log("Select Response:", response);
-    
-        expect(response.success).toBe(true);
-        expect(response.message).toBe("Select successful");
-        expect(Array.isArray(response.data)).toBe(true);
-    });
-    
-    it('should execute a valid select query with SUM, GROUP BY, ORDER BY, LIMIT, and two table joins', async () => {
-        client.select = jest.fn().mockResolvedValue({
-            success: true,
-            message: "Select successful",
-            data: [{ user_id: 1, name: 'John Doe', order_id: 1, total_price: 500 }],
-        });
+        it('should execute a valid select query with SUM, GROUP BY, ORDER BY, LIMIT, and two table joins', async () => {
+            const response = await client.select({
+                table: 'orders',
+                columns: {
+                    'users': ['user_id', 'name'],
+                    'orders': ['order_id'],
+                    'transactions': ['product', 'SUM(price) AS total_price']
+                },
+                joins: [
+                    { table: 'users', on: { 'orders.user_id': 'users.user_id' } },
+                    { table: 'transactions', on: { 'users.user_id': 'transactions.user_id' } }
+                ],
+                groupBy: ['users.user_id', 'users.name', 'transactions.product', 'orders.order_id'],
+                orderBy: [{ column: 'total_price', direction: 'DESC' }],
+                limit: 5
+            });
 
-        const response = await client.select({
-            table: 'orders',
-            columns: {
-                'users': ['user_id', 'name'],
-                'orders': ['order_id'],
-                'transactions': ['product', 'SUM(price) AS total_price']
-            },
-            joins: [
-                { table: 'users', on: { 'orders.user_id': 'users.user_id' } },
-                { table: 'transactions', on: { 'users.user_id': 'transactions.user_id' } }
-            ],
-            groupBy: ['users.user_id', 'users.name', 'transactions.product', 'orders.order_id'],
-            orderBy: [{ column: 'total_price', direction: 'DESC' }],
-            limit: 5
-        });
-        
-        console.log("Select Response:", response);
-    
-        expect(response.success).toBe(true);
-        expect(response.message).toBe("Select successful");
-        expect(Array.isArray(response.data)).toBe(true);
-    });
-    
-    test("should execute a valid select query with AVG", async () => {
-        client.select = jest.fn().mockResolvedValue({
-            success: true,
-            message: "Select successful",
-            data: [{ user_id: 1, name: 'John Doe', avg_price: 500 }],
+            expect(response.success).toBe(true);
+            expect(mockBigQuery.lastQuery()).toMatchObject({
+                sql:
+                    `SELECT u.user_id, u.name, o.order_id, t.product, SUM(t.price) AS total_price ` +
+                    `FROM ${T('orders')} AS o ` +
+                    `INNER JOIN ${T('users')} AS u ON o.user_id = u.user_id ` +
+                    `INNER JOIN ${T('transactions')} AS t ON u.user_id = t.user_id ` +
+                    `GROUP BY u.user_id, u.name, t.product, o.order_id ` +
+                    `ORDER BY total_price DESC LIMIT 5`,
+                params: []
+            });
         });
 
-        const response = await client.select({
-            table: "transactions",
-            columns: {
-                "users": ["user_id", "name"],
-                "transactions": ["AVG(price) AS avg_price"]
-            },
-            joins: [
-                { table: "users", on: { "transactions.user_id": "users.user_id" } }
-            ],
-            groupBy: ["users.user_id", "users.name"],
-            orderBy: [{ column: "avg_price", direction: "DESC" }],
-            limit: 5
+        test('should execute a valid select query with AVG', async () => {
+            const response = await client.select({
+                table: 'transactions',
+                columns: {
+                    'users': ['user_id', 'name'],
+                    'transactions': ['AVG(price) AS avg_price']
+                },
+                joins: [
+                    { table: 'users', on: { 'transactions.user_id': 'users.user_id' } }
+                ],
+                groupBy: ['users.user_id', 'users.name'],
+                orderBy: [{ column: 'avg_price', direction: 'DESC' }],
+                limit: 5
+            });
+
+            expect(response.success).toBe(true);
+            expect(mockBigQuery.lastQuery()?.sql).toBe(
+                `SELECT u.user_id, u.name, AVG(t.price) AS avg_price ` +
+                `FROM ${T('transactions')} AS t ` +
+                `INNER JOIN ${T('users')} AS u ON t.user_id = u.user_id ` +
+                `GROUP BY u.user_id, u.name ORDER BY avg_price DESC LIMIT 5`
+            );
         });
 
-        console.log("AVG Test Response:", response);
+        test('should execute a valid select query with COUNT', async () => {
+            const response = await client.select({
+                table: 'transactions',
+                columns: ['COUNT(price)'],
+                limit: 5
+            });
 
-        expect(response.success).toBe(true);
-        expect(response.message).toBe("Select successful");
-        expect(Array.isArray(response.data)).toBe(true);
-        expect(response.data[0]).toHaveProperty("avg_price");
-    });
-    
-    test("should execute a valid select query with COUNT", async () => {
-        client.select = jest.fn().mockResolvedValue({
-            success: true,
-            message: "Select successful",
-            data: [{ transaction_count: 5 }],
+            expect(response.success).toBe(true);
+            expect(response.data).toEqual(rows);
+            expect(mockBigQuery.lastQuery()?.sql).toBe(
+                `SELECT COUNT(t.price) AS count_price FROM ${T('transactions')} AS t LIMIT 5`
+            );
         });
-
-        const response = await client.select({
-            table: "transactions",
-            columns: [ "COUNT(price)"],
-            limit: 5
-        });
-
-        console.log("COUNT Test Response:", response);
-
-        expect(response.success).toBe(true);
-        expect(response.message).toBe("Select successful");
-        expect(Array.isArray(response.data)).toBe(true);
-        expect(response.data.length).toBeGreaterThan(0);
     });
 });
 

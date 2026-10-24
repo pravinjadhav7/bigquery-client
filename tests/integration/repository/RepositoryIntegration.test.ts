@@ -5,6 +5,10 @@ import { Relation } from '../../../src/decorators/Relation';
 import { Validate } from '../../../src/decorators/Validate';
 import { BaseRepository } from '../../../src/repository/BaseRepository';
 import { BigQueryClient } from '../../../src/core/BigQueryClient';
+import { mockBigQuery } from '../../helpers/mockBigQuery';
+
+// Only the SDK is mocked; BigQueryClient and BaseRepository run for real.
+jest.mock('@google-cloud/bigquery', () => require('../../helpers/mockBigQuery').sdkModule);
 
 describe('Repository Integration (Advanced Features)', () => {
   @Entity('users')
@@ -32,16 +36,17 @@ describe('Repository Integration (Advanced Features)', () => {
     user?: User;
   }
 
-  const mockQuery = jest.fn().mockResolvedValue({ data: [{ id: '1', name: 'Test' }] });
-  const mockInsert = jest.fn().mockResolvedValue({});
-  const mockUpdate = jest.fn().mockResolvedValue({});
-  const mockDelete = jest.fn().mockResolvedValue({});
-  const mockClient = {
-    query: mockQuery,
-    insert: mockInsert,
-    update: mockUpdate,
-    delete: mockDelete
-  } as unknown as BigQueryClient;
+  let client: BigQueryClient;
+
+  beforeEach(() => {
+    mockBigQuery.reset();
+    jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    client = new BigQueryClient({ projectId: 'test-project', datasetId: 'test-dataset' });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
 
   it('should store and retrieve relation metadata', () => {
     const relations = (Reflect as any).getMetadata('relations', User) || [];
@@ -66,15 +71,26 @@ describe('Repository Integration (Advanced Features)', () => {
   });
 
   it('should call repository methods and handle relations', async () => {
-    const userRepo = new BaseRepository<User>(User, mockClient);
-    const orderRepo = new BaseRepository<Order>(Order, mockClient);
+    mockBigQuery.onQuery((call) => {
+      if (/\busers\b/.test(call.sql ?? '')) return [[{ id: '1', user_name: 'Test' }]];
+      if (/\borders\b/.test(call.sql ?? '')) {
+        return [[{ id: '101', userId: '1', product: 'Book', amount: 10 }]];
+      }
+      return undefined;
+    });
+    const userRepo = new BaseRepository<User>(User, client);
+    const orderRepo = new BaseRepository<Order>(Order, client);
     const users = await userRepo.findAll();
     const orders = await orderRepo.findAll();
+    expect(mockBigQuery.queries.map(q => q.sql)).toEqual([
+      expect.stringMatching(/^SELECT id, user_name FROM .*users$/),
+      expect.stringMatching(/^SELECT id, userId, product, amount FROM .*orders$/),
+    ]);
     // Simulate join
     const usersWithOrders = users.map((user: any) => ({
       ...user,
       orders: orders.filter((order: any) => order.userId === user.id)
     }));
-    expect(usersWithOrders[0].orders).toBeDefined();
+    expect(usersWithOrders[0].orders).toHaveLength(1);
   });
-}); 
+});
