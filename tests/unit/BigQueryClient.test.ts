@@ -202,6 +202,12 @@ describe('BigQueryClient', () => {
             expect(result).toEqual({ success: false, message: 'No records found', data: [] });
         });
 
+        it('should rethrow the underlying error when select fails', async () => {
+            mockBigQuery.queueQueryError(new Error('quota exceeded'));
+
+            await expect(client.select({ table: 'users', columns: ['user_id'] })).rejects.toThrow('quota exceeded');
+        });
+
         it('should execute an update query', async () => {
             mockBigQuery.queueJobStatistics({ query: { numDmlAffectedRows: '3' } });
             const result = await client.update({

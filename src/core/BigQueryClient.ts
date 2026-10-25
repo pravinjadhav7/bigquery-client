@@ -359,8 +359,11 @@ export class BigQueryClient {
      * - Automatic SQL injection protection
      * 
      * @param {SelectOptions} options - Configuration object for the SELECT query
-     * @returns {Promise<{success: boolean, message: string, data: any[]}>} Promise resolving to query results
-     * @throws {BigQueryError} When query construction or execution fails
+     * @returns {Promise<{success: boolean, message: string, data: any[]}>} Promise resolving to query results.
+     *   When the query matches no rows it resolves (does not throw) with
+     *   `{ success: false, message: 'No records found', data: [] }`, so check `data.length`
+     *   rather than treating `success: false` as an error.
+     * @throws When query construction or execution fails (the underlying error is rethrown as-is)
      * 
      * @example
      * ```typescript

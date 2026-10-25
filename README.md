@@ -120,6 +120,9 @@ const users = await client.select({
   limit: 10
 });
 
+// A query that matches no rows does not throw: it resolves with
+// { success: false, message: 'No records found', data: [] }, so check `data.length`.
+
 // Complex SELECT with JOINs
 const ordersWithUsers = await client.select({
   table: 'orders',
