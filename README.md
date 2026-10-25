@@ -120,6 +120,9 @@ const users = await client.select({
   limit: 10
 });
 
+// A query that matches no rows does not throw: it resolves with
+// { success: false, message: 'No records found', data: [] }, so check `data.length`.
+
 // Complex SELECT with JOINs
 const ordersWithUsers = await client.select({
   table: 'orders',
@@ -159,6 +162,9 @@ const result = await client.insert({
     created_at: new Date().toISOString()
   }]
 });
+
+// By default a failed insert resolves with { success: false, message: 'Insert failed', affectedRows: 0 }
+// (the error is logged when enableLogging is on). Pass throwOnError: true to rethrow it instead.
 
 // Bulk insert
 const bulkResult = await client.insert({
@@ -503,10 +509,11 @@ console.log('Query Performance:', {
 
 // Get cache statistics
 const cacheStats = client.getCacheStats();
-console.log('Cache Performance:', {
+console.log('Cache:', {
   size: cacheStats.size,
-  hitRate: cacheStats.hitRate,
-  memoryUsage: cacheStats.memoryUsage
+  maxSize: cacheStats.maxSize,
+  enabled: cacheStats.enabled,
+  ttl: cacheStats.ttl
 });
 ```
 
@@ -638,6 +645,10 @@ try {
 - `update(options: UpdateOptions): Promise<UpdateResult>`
 - `delete(options: DeleteOptions): Promise<DeleteResult>`
 - `merge(options: MergeOptions): Promise<MergeResult>`
+
+#### Monitoring
+- `getMetrics(): { queries, errors, performance }`
+- `getCacheStats(): { size, maxSize, enabled, ttl }`
 
 #### Advanced Operations
 - `batchInsert(table: string, rows: Record<string, any>[]): Promise<any>`

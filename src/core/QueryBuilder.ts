@@ -169,10 +169,10 @@ export class QueryBuilder {
      * Sets the LIMIT clause.
      * @param limit - The maximum number of rows to return.
      * @returns The current instance of QueryBuilder.
-     * @throws Will throw an error if the limit is negative.
+     * @throws Will throw an error if the limit is not a non-negative integer.
      */
     limit(limit: number): this {
-        if (limit < 0) throw new Error("Limit must be a positive number.");
+        if (!Number.isInteger(limit) || limit < 0) throw new Error("Limit must be a non-negative integer.");
         this.limitValue = limit;
         return this;
     }
@@ -181,10 +181,10 @@ export class QueryBuilder {
      * Sets the OFFSET clause.
      * @param offset - The number of rows to skip.
      * @returns The current instance of QueryBuilder.
-     * @throws Will throw an error if the offset is negative.
+     * @throws Will throw an error if the offset is not a non-negative integer.
      */
     offset(offset: number): this {
-        if (offset < 0) throw new Error("Offset must be a positive number.");
+        if (!Number.isInteger(offset) || offset < 0) throw new Error("Offset must be a non-negative integer.");
         this.offsetValue = offset;
         return this;
     }

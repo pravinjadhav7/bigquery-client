@@ -75,6 +75,8 @@ interface InsertOptions {
     table: string;
     /** Array of row objects to insert */
     rows: Record<string, any>[];
+    /** Rethrow insert errors instead of returning `success: false` (default: false) */
+    throwOnError?: boolean;
 }
 
 /**
@@ -198,6 +200,47 @@ export class BigQueryClient {
         this.metricsCollector = new MetricsCollector();
     }
 
+    /** Runs a DML statement and returns the row count BigQuery reports in the job statistics. */
+    private async runDml(query: string, params: any[]): Promise<number> {
+        const [job] = await this.bigQuery.createQueryJob({ query, params });
+        await job.getQueryResults();
+        const [metadata] = await job.getMetadata();
+        return Number(metadata?.statistics?.query?.numDmlAffectedRows ?? 0);
+    }
+
+    /**
+     * Returns the metrics collected by `query()`: recorded queries, errors and
+     * aggregate performance (average execution time, total bytes processed).
+     * Delegates to `MetricsCollector.getMetrics()`.
+     */
+    getMetrics(): ReturnType<MetricsCollector['getMetrics']> {
+        return this.metricsCollector.getMetrics();
+    }
+
+    /**
+     * Returns query-cache statistics: current `size`, `maxSize`, whether caching is
+     * `enabled`, and the `ttl` in milliseconds. Delegates to `QueryCache.getStats()`.
+     */
+    getCacheStats(): ReturnType<QueryCache['getStats']> {
+        return this.queryCache.getStats();
+    }
+
+    /**
+     * Assigns one unique alias per table: the first letter of the name, with a numeric
+     * suffix on collision (users, units → u, u2). Comparison is case-insensitive because
+     * BigQuery aliases are.
+     */
+    private assignTableAliases(tables: string[]): string[] {
+        const used = new Set<string>();
+        return tables.map(name => {
+            const base = /^[A-Za-z_]/.test(name) ? name[0] : 't';
+            let alias = base;
+            for (let n = 2; used.has(alias.toLowerCase()); n++) alias = `${base}${n}`;
+            used.add(alias.toLowerCase());
+            return alias;
+        });
+    }
+
     /**
      * Formats a table name to include the full BigQuery path
      * 
@@ -293,6 +336,7 @@ export class BigQueryClient {
 
             return queryResult;
         } catch (error) {
+            this.logger.logError(error as Error);
             this.metricsCollector.recordError(error as Error);
             throw new BigQueryError(
                 error instanceof Error ? error.message : 'Unknown error',
@@ -350,8 +394,11 @@ export class BigQueryClient {
      * - Automatic SQL injection protection
      * 
      * @param {SelectOptions} options - Configuration object for the SELECT query
-     * @returns {Promise<{success: boolean, message: string, data: any[]}>} Promise resolving to query results
-     * @throws {BigQueryError} When query construction or execution fails
+     * @returns {Promise<{success: boolean, message: string, data: any[]}>} Promise resolving to query results.
+     *   When the query matches no rows it resolves (does not throw) with
+     *   `{ success: false, message: 'No records found', data: [] }`, so check `data.length`
+     *   rather than treating `success: false` as an error.
+     * @throws When query construction or execution fails (the underlying error is rethrown as-is)
      * 
      * @example
      * ```typescript
@@ -384,8 +431,10 @@ export class BigQueryClient {
         try {
             const { table, columns = {}, joins = [], where, groupBy, orderBy, limit, offset } = options;
 
-            // Generate alias for the main table (e.g., users → u)
-            const mainAlias = table[0]; // First letter aliasing
+            // Assign a unique alias to the main table and every joined table up front
+            // (users → u, units → u2), so column mapping can resolve any of them.
+            const aliases = this.assignTableAliases([table, ...joins.map(j => j.table)]);
+            const mainAlias = aliases[0];
             const formattedMainTable = `${this.formatTableName(table)} AS ${mainAlias}`;
 
             // Initialize QueryBuilder
@@ -393,11 +442,20 @@ export class BigQueryClient {
 
             // Store table aliases
             const aliasMap: Record<string, string> = { [table]: mainAlias };
+            joins.forEach((join, i) => {
+                if (!(join.table in aliasMap)) aliasMap[join.table] = aliases[i + 1];
+            });
 
             // Normalize columns: Convert array format to object format if necessary
             const normalizedColumns = Array.isArray(columns)
                 ? { [table]: columns }
                 : columns;
+
+            const resolveAlias = (tableRef: string): string => {
+                const alias = aliasMap[tableRef];
+                if (!alias) throw new Error(`Unknown table "${tableRef}" in columns: it must be the main table or a joined table.`);
+                return alias;
+            };
 
             // Handle column selection with correct table aliasing
             const selectedColumns = Object.entries(normalizedColumns).flatMap(([tableRef, cols]) =>
@@ -413,7 +471,7 @@ export class BigQueryClient {
             
                             if (AGGREGATE_FUNCTIONS.has(funcName)) {
                                 // Ensure table alias is applied correctly
-                                const formattedColumn = columnName === "*" ? "*" : `${aliasMap[tableRef] || tableRef[0]}.${columnName}`;
+                                const formattedColumn = columnName === "*" ? "*" : `${resolveAlias(tableRef)}.${columnName}`;
             
                                 // If no alias is provided, generate a meaningful alias
                                 if (!userDefinedAlias) {
@@ -425,7 +483,7 @@ export class BigQueryClient {
                         }
             
                         // Apply table alias for regular columns
-                        return `${aliasMap[tableRef] || tableRef[0]}.${col}`;
+                        return `${resolveAlias(tableRef)}.${col}`;
                     })
                     : []
             );
@@ -433,14 +491,13 @@ export class BigQueryClient {
             qb.select(selectedColumns);
 
             // Process joins with correct aliasing
-            for (const join of joins) {
-                const joinAlias = join.table[0]; // Generate alias (e.g., orders → o)
-                aliasMap[join.table] = joinAlias;
+            for (const [i, join] of joins.entries()) {
+                const joinAlias = aliases[i + 1];
 
                 // Proper join condition references
                 const joinCondition = Object.entries(join.on).reduce((acc, [left, right]) => {
                     const leftAlias = aliasMap[left.split('.')[0]] || mainAlias;
-                    const rightAlias = aliasMap[join.table] || joinAlias;
+                    const rightAlias = joinAlias;
                     return { ...acc, [`${leftAlias}.${left.split('.').pop()}`]: `${rightAlias}.${right.split('.').pop()}` };
                 }, {});
 
@@ -505,17 +562,14 @@ export class BigQueryClient {
             }
 
 
-            if (limit) qb.limit(limit);
-            if (offset) qb.offset(offset);
+            if (limit !== undefined) qb.limit(limit);
+            if (offset !== undefined) qb.offset(offset);
 
             // Execute the query
             const { query, params } = qb.build();
-            console.log("🚀 Executing SELECT Query:", query);
-            console.log("🔍 With Parameters:", params);
+            this.logger.logQuery(query, params);
 
             const [result] = await this.bigQuery.query({ query, params });
-
-            console.log("✅ BigQuery Select Execution Result:", result);
 
             return result.length > 0
                 ? { success: true, message: "Select successful", data: result }
@@ -528,18 +582,16 @@ export class BigQueryClient {
     }
 
     /**
-     * Inserts multiple rows into a BigQuery table with automatic validation
+     * Inserts rows into a BigQuery table using a single parameterized INSERT statement.
      * 
-     * This method provides a safe and efficient way to insert data with:
-     * - Automatic SQL injection protection
-     * - Batch processing for multiple rows
-     * - Schema validation
-     * - Error handling and logging
-     * - Transaction-like behavior
+     * By default errors are swallowed: a failed insert resolves with
+     * `{ success: false, message: 'Insert failed', affectedRows: 0 }` and the error is
+     * recorded through the Logger (when `enableLogging` is on). Pass `throwOnError: true`
+     * to have the original error rethrown instead.
      * 
-     * @param {InsertOptions} options - Configuration object containing table and row data
+     * @param {InsertOptions} options - Table, rows and optional `throwOnError`
      * @returns {Promise<{success: boolean, message: string, affectedRows: number}>} Promise resolving to insert results
-     * @throws {BigQueryError} When validation fails or insert operation encounters errors
+     * @throws The underlying error, only when `throwOnError` is true
      * 
      * @example
      * ```typescript
@@ -568,6 +620,7 @@ export class BigQueryClient {
      * ```
      */
     async insert(options: InsertOptions): Promise<{ success: boolean; message: string; affectedRows: number }> {
+        const throwOnError = options?.throwOnError === true;
         try {
             const { table, rows } = options;
             const qb = new QueryBuilder(this.formatTableName(table));
@@ -582,6 +635,7 @@ export class BigQueryClient {
 
         } catch (error) {
             this.logger.logError(error as Error);
+            if (throwOnError) throw error;
             return { success: false, message: "Insert failed", affectedRows: 0 };
         }
     }
@@ -640,11 +694,9 @@ export class BigQueryClient {
             qb.update(set).where(where);
             const { query, params } = qb.build();
 
-            // Execute update query
-            await this.bigQuery.query({ query, params });
+            const affectedRows = await this.runDml(query, params);
 
-            // Return success if no error was thrown
-            return { success: true, message: "Update successful", affectedRows: 1 };
+            return { success: true, message: "Update successful", affectedRows };
         } catch (error) {
             this.logger.logError(error as Error);
             throw error;
@@ -704,18 +756,9 @@ export class BigQueryClient {
             qb.delete().where(where);
             const { query, params } = qb.build();
 
-            await this.bigQuery.query({ query, params });
+            const affectedRows = await this.runDml(query, params);
 
-            const checkQuery = `SELECT COUNT(*) AS count FROM ${this.formatTableName(table)} WHERE user_id = ?`;
-            const [checkResult] = await this.bigQuery.query({ query: checkQuery, params: [where.user_id] });
-
-            const affectedRows = checkResult?.[0]?.count ? Number(checkResult[0].count) : 0;
-
-            console.log("📌 Rows Deleted (REAL DB):", affectedRows);
-
-            return affectedRows === 0
-                ? { success: true, message: "Delete successful", affectedRows: 1 } // Assume one row deleted if count is now 0
-                : { success: false, message: "Delete executed but row still exists", affectedRows: 0 };
+            return { success: true, message: "Delete successful", affectedRows };
         } catch (error) {
             this.logger.logError(error as Error);
             throw error;

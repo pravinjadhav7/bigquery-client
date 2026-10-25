@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `delete()` and `update()` now return the real affected-row count from the DML job statistics (`numDmlAffectedRows`). `delete()` no longer runs a hardcoded `user_id` verification query, and `update()` no longer reports a fixed `1`. `delete()` returns `success: true` whenever the statement succeeds, including when 0 rows matched.
+- Removed all `console.*` calls from `select()`, `delete()` and `Transaction`. Output now goes only through `Logger` (gated by `enableLogging`), which prints the SQL text and errors, never params or result rows.
+- `limit: 0` and `offset: 0` are no longer dropped by `select()`. `limit`/`offset` must be non-negative integers (`QueryBuilder.limit()`/`offset()` now also reject fractional, `NaN` and infinite values; the error message changed accordingly).
+- `select()` table aliases are unique (`users` → `u`, `units` → `u2`). Queries without collisions are unchanged. Columns keyed by a table that is neither the main table nor joined now throw.
+
+### Added
+- `insert({ throwOnError })`: optional, default `false` (unchanged behavior). Swallowed insert errors are now logged via `Logger`.
+- `BigQueryClient.getMetrics()` and `BigQueryClient.getCacheStats()`.
+
+### Documentation
+- `select()` resolves with `success: false` and `data: []` when no rows match; it does not throw.
+- Corrected the cache statistics shape in the README (`size`, `maxSize`, `enabled`, `ttl`).
+
 ## [1.0.14] - 2024-06-26
 
 ### 🚀 Major Features Added

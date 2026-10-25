@@ -51,6 +51,7 @@ class MockBigQueryState {
   private nextErrors: Error[] = [];
   private handler?: QueryHandler;
   private insertResult: any = [{}];
+  private jobStatistics: any[] = [];
 
   /** Clear recorded calls and every queued response/handler. Call in beforeEach. */
   reset(): void {
@@ -60,6 +61,17 @@ class MockBigQueryState {
     this.nextErrors = [];
     this.handler = undefined;
     this.insertResult = [{}];
+    this.jobStatistics = [];
+  }
+
+  /** Queue the `statistics` the next `createQueryJob()` job reports, e.g. `{ query: { numDmlAffectedRows: '3' } }`. */
+  queueJobStatistics(statistics: any): this {
+    this.jobStatistics.push(statistics);
+    return this;
+  }
+
+  takeJobStatistics(): any {
+    return this.jobStatistics.shift() ?? { totalBytesProcessed: '0' };
   }
 
   /** Queue the next `query()` response as `[rows, apiResponse]`. Falls back to empty rows. */
@@ -181,12 +193,13 @@ class MockBigQuery {
     return mockBigQuery.answerQuery(call);
   }
 
-  async createQueryJob(arg: any): Promise<[{ metadata: any }]> {
+  async createQueryJob(arg: any): Promise<[any]> {
     const call: RecordedCall = { method: 'createQueryJob', ...normaliseQueryArgs(arg) };
     mockBigQuery.record(call);
     const err = mockBigQuery.takeError();
     if (err) throw err;
-    return [{ metadata: { statistics: { totalBytesProcessed: '0' }, dryRun: !!arg?.dryRun } }];
+    const metadata = { statistics: mockBigQuery.takeJobStatistics(), dryRun: !!arg?.dryRun };
+    return [{ metadata, getQueryResults: async () => [[]], getMetadata: async () => [metadata] }] as any;
   }
 
   dataset(datasetId: string) {

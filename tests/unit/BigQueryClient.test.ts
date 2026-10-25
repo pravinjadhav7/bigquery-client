@@ -73,6 +73,36 @@ describe('BigQueryClient', () => {
         });
     });
 
+    describe('getMetrics and getCacheStats', () => {
+        it('should expose query metrics collected by query()', async () => {
+            mockBigQuery.queueQueryResult([{ a: 1 }], { totalBytesProcessed: '10' });
+            await client.query('SELECT 1');
+            mockBigQuery.queueQueryError(new Error('boom'));
+            await expect(client.query('SELECT 2')).rejects.toThrow();
+
+            const metrics = client.getMetrics();
+
+            expect(metrics.queries).toHaveLength(1);
+            expect(metrics.queries[0]).toMatchObject({ rowsAffected: 1, cacheHit: false });
+            expect(metrics.errors).toHaveLength(1);
+            expect(metrics.performance).toEqual(expect.objectContaining({
+                averageExecutionTime: expect.any(Number),
+                totalBytesProcessed: expect.any(Number)
+            }));
+        });
+
+        it('should expose cache statistics', async () => {
+            const cached = new BigQueryClient({
+                projectId: 'p', datasetId: 'd', enableCache: true, cacheTtl: 1000, cacheMaxSize: 5
+            });
+            mockBigQuery.queueQueryResult([{ a: 1 }]);
+            await cached.query('SELECT 1');
+
+            expect(cached.getCacheStats()).toEqual({ size: 1, maxSize: 5, enabled: true, ttl: 1000 });
+            expect(client.getCacheStats()).toMatchObject({ size: 0, enabled: false });
+        });
+    });
+
     describe('Materialized Views', () => {
         it('should create materialized view', async () => {
             const config = {
@@ -202,7 +232,29 @@ describe('BigQueryClient', () => {
             expect(result).toEqual({ success: false, message: 'No records found', data: [] });
         });
 
+        it('should emit LIMIT 0 and OFFSET 0 instead of dropping them', async () => {
+            await client.select({ table: 'users', columns: ['user_id'], limit: 0, offset: 0 });
+
+            expect(mockBigQuery.lastQuery()?.sql).toMatch(/ LIMIT 0 OFFSET 0$/);
+        });
+
+        it.each([
+            ['limit', -1], ['limit', 1.5], ['limit', NaN], ['offset', -1], ['offset', 2.5], ['offset', Infinity]
+        ])('should reject %s = %p without calling BigQuery', async (key, value) => {
+            await expect(
+                client.select({ table: 'users', columns: ['user_id'], [key]: value } as any)
+            ).rejects.toThrow(/non-negative integer/);
+            expect(mockBigQuery.calls).toHaveLength(0);
+        });
+
+        it('should rethrow the underlying error when select fails', async () => {
+            mockBigQuery.queueQueryError(new Error('quota exceeded'));
+
+            await expect(client.select({ table: 'users', columns: ['user_id'] })).rejects.toThrow('quota exceeded');
+        });
+
         it('should execute an update query', async () => {
+            mockBigQuery.queueJobStatistics({ query: { numDmlAffectedRows: '3' } });
             const result = await client.update({
                 table: 'users',
                 set: {
@@ -213,9 +265,9 @@ describe('BigQueryClient', () => {
                 }
             });
 
-            expect(result.success).toBe(true);
-            expect(mockBigQuery.queries).toHaveLength(1);
-            expect(mockBigQuery.lastQuery()).toMatchObject({
+            expect(result).toEqual({ success: true, message: 'Update successful', affectedRows: 3 });
+            expect(mockBigQuery.callsOf('createQueryJob')).toHaveLength(1);
+            expect(mockBigQuery.callsOf('createQueryJob')[0]).toMatchObject({
                 sql: `UPDATE ${T('users')} SET name = ? WHERE user_id = ?`,
                 params: ['John Doe', 1]
             });
@@ -253,35 +305,62 @@ describe('BigQueryClient', () => {
             expect(result).toEqual({ success: false, message: 'Insert failed', affectedRows: 0 });
         });
 
-        it('should execute a delete query', async () => {
-            mockBigQuery.queueQueryResult([]).queueQueryResult([{ count: 0 }]);
+        it('should log a swallowed insert error through the Logger', async () => {
+            const loggingClient = new BigQueryClient({ projectId: 'test-project', datasetId: 'test-dataset', enableLogging: true });
+            jest.spyOn(console, 'error').mockImplementation(() => undefined);
+            mockBigQuery.queueQueryError(new Error('quota exceeded'));
 
-            const result = await client.delete({
-                table: 'users',
-                where: {
-                    user_id: 1
-                }
-            });
+            const result = await loggingClient.insert({ table: 'users', rows: [{ user_id: 1 }] });
 
-            expect(result.success).toBe(true);
-            expect(mockBigQuery.queries[0]).toMatchObject({
+            expect(result.success).toBe(false);
+            expect((loggingClient as any).logger.getLogs().map((l: any) => l.error?.message)).toContain('quota exceeded');
+        });
+
+        it('should rethrow the insert error when throwOnError is true', async () => {
+            mockBigQuery.queueQueryError(new Error('quota exceeded'));
+
+            await expect(
+                client.insert({ table: 'users', rows: [{ user_id: 1 }], throwOnError: true })
+            ).rejects.toThrow('quota exceeded');
+        });
+
+        it('should still return success:false when throwOnError is explicitly false', async () => {
+            mockBigQuery.queueQueryError(new Error('quota exceeded'));
+
+            const result = await client.insert({ table: 'users', rows: [{ user_id: 1 }], throwOnError: false });
+
+            expect(result).toEqual({ success: false, message: 'Insert failed', affectedRows: 0 });
+        });
+
+        it('should execute a delete query and report the affected rows from job statistics', async () => {
+            mockBigQuery.queueJobStatistics({ query: { numDmlAffectedRows: '2' } });
+
+            const result = await client.delete({ table: 'users', where: { user_id: 1 } });
+
+            expect(result).toEqual({ success: true, message: 'Delete successful', affectedRows: 2 });
+            expect(mockBigQuery.calls).toHaveLength(1);
+            expect(mockBigQuery.callsOf('createQueryJob')[0]).toMatchObject({
                 sql: `DELETE FROM ${T('users')} WHERE user_id = ?`,
                 params: [1]
             });
         });
 
-        // TODO(bug: delete-hardcoded-user-id): the post-delete verification query is hardcoded to
-        // `WHERE user_id = ?` with params [where.user_id], so deleting by any other column sends
-        // `user_id = ?` with an undefined param (and verifies the wrong thing).
-        test.failing('should not hardcode user_id in the post-delete check when deleting by another column', async () => {
-            mockBigQuery.queueQueryResult([]).queueQueryResult([{ count: 0 }]);
+        it('should not hardcode user_id when deleting by another column', async () => {
+            mockBigQuery.queueJobStatistics({ query: { numDmlAffectedRows: '1' } });
 
             await client.delete({ table: 'orders', where: { order_id: 7 } });
 
-            for (const q of mockBigQuery.queries) {
-                expect(q.sql).not.toContain('user_id');
-                expect(q.params).not.toContain(undefined);
-            }
+            expect(mockBigQuery.calls).toHaveLength(1);
+            expect(mockBigQuery.calls[0].sql).not.toContain('user_id');
+            expect(mockBigQuery.calls[0].params).toEqual([7]);
+        });
+
+        it('should report 0 affected rows when the DML matched nothing', async () => {
+            mockBigQuery.queueJobStatistics({ query: { numDmlAffectedRows: '0' } });
+
+            const result = await client.delete({ table: 'users', where: { user_id: 99 } });
+
+            expect(result).toMatchObject({ success: true, affectedRows: 0 });
         });
     });
 
@@ -337,6 +416,47 @@ describe('BigQueryClient', () => {
                     `INNER JOIN ${T('orders')} AS o ON u.user_id = o.user_id WHERE u.user_id = ?`,
                 params: [1]
             });
+        });
+
+        it('should give users and units distinct aliases', async () => {
+            await client.select({
+                table: 'users',
+                columns: { users: ['id', 'COUNT(id) AS n'], units: ['name'] },
+                joins: [{ table: 'units', on: { 'users.unit_id': 'units.id' } }],
+                where: { 'units.name': 'a' },
+                groupBy: ['users.id', 'units.name'],
+                orderBy: [{ column: 'units.name' }]
+            });
+
+            expect(mockBigQuery.lastQuery()).toMatchObject({
+                sql:
+                    `SELECT u.id, COUNT(u.id) AS n, u2.name FROM ${T('users')} AS u ` +
+                    `INNER JOIN ${T('units')} AS u2 ON u.unit_id = u2.id WHERE u2.name = ? ` +
+                    `GROUP BY u.id, u2.name ORDER BY u2.name ASC`,
+                params: ['a']
+            });
+        });
+
+        it('should keep aliases unique when three tables share a first letter', async () => {
+            await client.select({
+                table: 'users',
+                columns: { users: ['id'], units: ['id'], uploads: ['id'] },
+                joins: [
+                    { table: 'units', on: { 'users.unit_id': 'units.id' } },
+                    { table: 'uploads', on: { 'users.id': 'uploads.user_id' } }
+                ]
+            });
+
+            expect(mockBigQuery.lastQuery()?.sql).toContain('SELECT u.id, u2.id, u3.id FROM');
+            expect(mockBigQuery.lastQuery()?.sql).toContain(`AS u2 ON u.unit_id = u2.id`);
+            expect(mockBigQuery.lastQuery()?.sql).toContain(`AS u3 ON u.id = u3.user_id`);
+        });
+
+        it('should reject columns keyed by a table that is neither the main table nor joined', async () => {
+            await expect(
+                client.select({ table: 'users', columns: { orders: ['id'] } })
+            ).rejects.toThrow(/Unknown table "orders"/);
+            expect(mockBigQuery.calls).toHaveLength(0);
         });
 
         const threeTable = (type?: 'LEFT' | 'RIGHT' | 'FULL') => ({
