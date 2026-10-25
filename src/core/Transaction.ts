@@ -28,7 +28,6 @@ export class Transaction {
                 await this.client.query(query, params);
             }
         } catch (error) {
-            console.error('Error executing transaction', error);
             throw error;
         }
 

@@ -301,6 +301,7 @@ export class BigQueryClient {
 
             return queryResult;
         } catch (error) {
+            this.logger.logError(error as Error);
             this.metricsCollector.recordError(error as Error);
             throw new BigQueryError(
                 error instanceof Error ? error.message : 'Unknown error',
@@ -518,12 +519,9 @@ export class BigQueryClient {
 
             // Execute the query
             const { query, params } = qb.build();
-            console.log("🚀 Executing SELECT Query:", query);
-            console.log("🔍 With Parameters:", params);
+            this.logger.logQuery(query, params);
 
             const [result] = await this.bigQuery.query({ query, params });
-
-            console.log("✅ BigQuery Select Execution Result:", result);
 
             return result.length > 0
                 ? { success: true, message: "Select successful", data: result }
