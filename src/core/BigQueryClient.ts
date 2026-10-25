@@ -519,8 +519,8 @@ export class BigQueryClient {
             }
 
 
-            if (limit) qb.limit(limit);
-            if (offset) qb.offset(offset);
+            if (limit !== undefined) qb.limit(limit);
+            if (offset !== undefined) qb.offset(offset);
 
             // Execute the query
             const { query, params } = qb.build();

@@ -202,6 +202,21 @@ describe('BigQueryClient', () => {
             expect(result).toEqual({ success: false, message: 'No records found', data: [] });
         });
 
+        it('should emit LIMIT 0 and OFFSET 0 instead of dropping them', async () => {
+            await client.select({ table: 'users', columns: ['user_id'], limit: 0, offset: 0 });
+
+            expect(mockBigQuery.lastQuery()?.sql).toMatch(/ LIMIT 0 OFFSET 0$/);
+        });
+
+        it.each([
+            ['limit', -1], ['limit', 1.5], ['limit', NaN], ['offset', -1], ['offset', 2.5], ['offset', Infinity]
+        ])('should reject %s = %p without calling BigQuery', async (key, value) => {
+            await expect(
+                client.select({ table: 'users', columns: ['user_id'], [key]: value } as any)
+            ).rejects.toThrow(/non-negative integer/);
+            expect(mockBigQuery.calls).toHaveLength(0);
+        });
+
         it('should rethrow the underlying error when select fails', async () => {
             mockBigQuery.queueQueryError(new Error('quota exceeded'));
 

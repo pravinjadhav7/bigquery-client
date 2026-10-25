@@ -177,4 +177,19 @@ describe('QueryBuilder', () => {
       expect(params).toEqual(['admin']);
     });
   });
-}); 
+
+  describe('limit and offset validation', () => {
+    it('allows 0', () => {
+      const { query } = new QueryBuilder('t').select(['a']).limit(0).offset(0).build();
+      expect(query).toMatch(/LIMIT 0 OFFSET 0$/);
+    });
+
+    it.each([-1, 1.5, NaN, Infinity])('rejects limit %p', (v) => {
+      expect(() => new QueryBuilder('t').limit(v)).toThrow(/non-negative integer/);
+    });
+
+    it.each([-1, 1.5, NaN, Infinity])('rejects offset %p', (v) => {
+      expect(() => new QueryBuilder('t').offset(v)).toThrow(/non-negative integer/);
+    });
+  });
+});
