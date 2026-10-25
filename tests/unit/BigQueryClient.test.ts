@@ -203,6 +203,7 @@ describe('BigQueryClient', () => {
         });
 
         it('should execute an update query', async () => {
+            mockBigQuery.queueJobStatistics({ query: { numDmlAffectedRows: '3' } });
             const result = await client.update({
                 table: 'users',
                 set: {
@@ -213,9 +214,9 @@ describe('BigQueryClient', () => {
                 }
             });
 
-            expect(result.success).toBe(true);
-            expect(mockBigQuery.queries).toHaveLength(1);
-            expect(mockBigQuery.lastQuery()).toMatchObject({
+            expect(result).toEqual({ success: true, message: 'Update successful', affectedRows: 3 });
+            expect(mockBigQuery.callsOf('createQueryJob')).toHaveLength(1);
+            expect(mockBigQuery.callsOf('createQueryJob')[0]).toMatchObject({
                 sql: `UPDATE ${T('users')} SET name = ? WHERE user_id = ?`,
                 params: ['John Doe', 1]
             });
@@ -253,35 +254,35 @@ describe('BigQueryClient', () => {
             expect(result).toEqual({ success: false, message: 'Insert failed', affectedRows: 0 });
         });
 
-        it('should execute a delete query', async () => {
-            mockBigQuery.queueQueryResult([]).queueQueryResult([{ count: 0 }]);
+        it('should execute a delete query and report the affected rows from job statistics', async () => {
+            mockBigQuery.queueJobStatistics({ query: { numDmlAffectedRows: '2' } });
 
-            const result = await client.delete({
-                table: 'users',
-                where: {
-                    user_id: 1
-                }
-            });
+            const result = await client.delete({ table: 'users', where: { user_id: 1 } });
 
-            expect(result.success).toBe(true);
-            expect(mockBigQuery.queries[0]).toMatchObject({
+            expect(result).toEqual({ success: true, message: 'Delete successful', affectedRows: 2 });
+            expect(mockBigQuery.calls).toHaveLength(1);
+            expect(mockBigQuery.callsOf('createQueryJob')[0]).toMatchObject({
                 sql: `DELETE FROM ${T('users')} WHERE user_id = ?`,
                 params: [1]
             });
         });
 
-        // TODO(bug: delete-hardcoded-user-id): the post-delete verification query is hardcoded to
-        // `WHERE user_id = ?` with params [where.user_id], so deleting by any other column sends
-        // `user_id = ?` with an undefined param (and verifies the wrong thing).
-        test.failing('should not hardcode user_id in the post-delete check when deleting by another column', async () => {
-            mockBigQuery.queueQueryResult([]).queueQueryResult([{ count: 0 }]);
+        it('should not hardcode user_id when deleting by another column', async () => {
+            mockBigQuery.queueJobStatistics({ query: { numDmlAffectedRows: '1' } });
 
             await client.delete({ table: 'orders', where: { order_id: 7 } });
 
-            for (const q of mockBigQuery.queries) {
-                expect(q.sql).not.toContain('user_id');
-                expect(q.params).not.toContain(undefined);
-            }
+            expect(mockBigQuery.calls).toHaveLength(1);
+            expect(mockBigQuery.calls[0].sql).not.toContain('user_id');
+            expect(mockBigQuery.calls[0].params).toEqual([7]);
+        });
+
+        it('should report 0 affected rows when the DML matched nothing', async () => {
+            mockBigQuery.queueJobStatistics({ query: { numDmlAffectedRows: '0' } });
+
+            const result = await client.delete({ table: 'users', where: { user_id: 99 } });
+
+            expect(result).toMatchObject({ success: true, affectedRows: 0 });
         });
     });
 

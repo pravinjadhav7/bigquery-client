@@ -198,6 +198,14 @@ export class BigQueryClient {
         this.metricsCollector = new MetricsCollector();
     }
 
+    /** Runs a DML statement and returns the row count BigQuery reports in the job statistics. */
+    private async runDml(query: string, params: any[]): Promise<number> {
+        const [job] = await this.bigQuery.createQueryJob({ query, params });
+        await job.getQueryResults();
+        const [metadata] = await job.getMetadata();
+        return Number(metadata?.statistics?.query?.numDmlAffectedRows ?? 0);
+    }
+
     /**
      * Formats a table name to include the full BigQuery path
      * 
@@ -640,11 +648,9 @@ export class BigQueryClient {
             qb.update(set).where(where);
             const { query, params } = qb.build();
 
-            // Execute update query
-            await this.bigQuery.query({ query, params });
+            const affectedRows = await this.runDml(query, params);
 
-            // Return success if no error was thrown
-            return { success: true, message: "Update successful", affectedRows: 1 };
+            return { success: true, message: "Update successful", affectedRows };
         } catch (error) {
             this.logger.logError(error as Error);
             throw error;
@@ -704,18 +710,9 @@ export class BigQueryClient {
             qb.delete().where(where);
             const { query, params } = qb.build();
 
-            await this.bigQuery.query({ query, params });
+            const affectedRows = await this.runDml(query, params);
 
-            const checkQuery = `SELECT COUNT(*) AS count FROM ${this.formatTableName(table)} WHERE user_id = ?`;
-            const [checkResult] = await this.bigQuery.query({ query: checkQuery, params: [where.user_id] });
-
-            const affectedRows = checkResult?.[0]?.count ? Number(checkResult[0].count) : 0;
-
-            console.log("📌 Rows Deleted (REAL DB):", affectedRows);
-
-            return affectedRows === 0
-                ? { success: true, message: "Delete successful", affectedRows: 1 } // Assume one row deleted if count is now 0
-                : { success: false, message: "Delete executed but row still exists", affectedRows: 0 };
+            return { success: true, message: "Delete successful", affectedRows };
         } catch (error) {
             this.logger.logError(error as Error);
             throw error;

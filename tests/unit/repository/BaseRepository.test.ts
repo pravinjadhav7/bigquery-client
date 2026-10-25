@@ -115,7 +115,7 @@ describe('BaseRepository', () => {
   it('should update by primary key on update', async () => {
     await repo.update('1', { name: 'Updated' });
 
-    expect(mockBigQuery.lastQuery()).toMatchObject({
+    expect(mockBigQuery.callsOf('createQueryJob')[0]).toMatchObject({
       sql: expect.stringMatching(new RegExp(`^UPDATE ${T} SET .* WHERE id = \\?$`)),
       params: ['Updated', '1']
     });
@@ -125,30 +125,25 @@ describe('BaseRepository', () => {
   test.failing('should SET custom column names on update', async () => {
     await repo.update('1', { name: 'Updated' });
 
-    expect(mockBigQuery.lastQuery()?.sql).toBe(`UPDATE ${T} SET custom_name = ? WHERE id = ?`);
+    expect(mockBigQuery.callsOf('createQueryJob')[0]?.sql).toBe(`UPDATE ${T} SET custom_name = ? WHERE id = ?`);
   });
 
   it('should delete by primary key on delete', async () => {
-    mockBigQuery.queueQueryResult([]).queueQueryResult([{ count: 0 }]);
-
     await repo.delete('1');
 
-    expect(mockBigQuery.queries[0]).toMatchObject({
+    expect(mockBigQuery.callsOf('createQueryJob')[0]).toMatchObject({
       sql: `DELETE FROM ${T} WHERE id = ?`,
       params: ['1']
     });
   });
 
-  // TODO(bug: delete-hardcoded-user-id): client.delete's verification query is hardcoded to
-  // `user_id`, so repository deletes by `id` send `WHERE user_id = ?` with an undefined param.
-  test.failing('should not send hardcoded user_id queries on delete', async () => {
-    mockBigQuery.queueQueryResult([]).queueQueryResult([{ count: 0 }]);
+  it('should delete by the primary key without any extra verification query', async () => {
+    mockBigQuery.queueJobStatistics({ query: { numDmlAffectedRows: '1' } });
 
     await repo.delete('1');
 
-    for (const q of mockBigQuery.queries) {
-      expect(q.sql).not.toContain('user_id');
-      expect(q.params).not.toContain(undefined);
-    }
+    expect(mockBigQuery.calls).toHaveLength(1);
+    expect(mockBigQuery.calls[0].sql).not.toContain('user_id');
+    expect(mockBigQuery.calls[0].params).not.toContain(undefined);
   });
 });
