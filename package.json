@@ -25,10 +25,7 @@
     "prepublishOnly": "npm run test && npm run build",
     "clean": "rimraf dist",
     "prebuild": "npm run clean",
-    "docs": "typedoc --out docs src",
-    "release": "npm version patch && npm publish",
-    "release:minor": "npm version minor && npm publish",
-    "release:major": "npm version major && npm publish"
+    "docs": "typedoc --out docs src"
   },
   "keywords": [
     "bigquery",
@@ -66,6 +63,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.29.0",
+    "@semantic-release/git": "^11.0.1",
     "@types/jest": "^30.0.0",
     "@types/node": "^24.0.3",
     "@typescript-eslint/eslint-plugin": "^8.34.1",
@@ -74,6 +72,7 @@
     "jest": "^30.0.0",
     "prettier": "^3.5.3",
     "rimraf": "^6.0.1",
+    "semantic-release": "^25.0.9",
     "terser": "^5.43.0",
     "ts-jest": "^29.4.0",
     "typedoc": "^0.28.5",
