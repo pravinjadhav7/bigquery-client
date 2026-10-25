@@ -209,6 +209,23 @@ export class BigQueryClient {
     }
 
     /**
+     * Returns the metrics collected by `query()`: recorded queries, errors and
+     * aggregate performance (average execution time, total bytes processed).
+     * Delegates to `MetricsCollector.getMetrics()`.
+     */
+    getMetrics(): ReturnType<MetricsCollector['getMetrics']> {
+        return this.metricsCollector.getMetrics();
+    }
+
+    /**
+     * Returns query-cache statistics: current `size`, `maxSize`, whether caching is
+     * `enabled`, and the `ttl` in milliseconds. Delegates to `QueryCache.getStats()`.
+     */
+    getCacheStats(): ReturnType<QueryCache['getStats']> {
+        return this.queryCache.getStats();
+    }
+
+    /**
      * Assigns one unique alias per table: the first letter of the name, with a numeric
      * suffix on collision (users, units → u, u2). Comparison is case-insensitive because
      * BigQuery aliases are.

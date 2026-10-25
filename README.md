@@ -509,10 +509,11 @@ console.log('Query Performance:', {
 
 // Get cache statistics
 const cacheStats = client.getCacheStats();
-console.log('Cache Performance:', {
+console.log('Cache:', {
   size: cacheStats.size,
-  hitRate: cacheStats.hitRate,
-  memoryUsage: cacheStats.memoryUsage
+  maxSize: cacheStats.maxSize,
+  enabled: cacheStats.enabled,
+  ttl: cacheStats.ttl
 });
 ```
 
@@ -644,6 +645,10 @@ try {
 - `update(options: UpdateOptions): Promise<UpdateResult>`
 - `delete(options: DeleteOptions): Promise<DeleteResult>`
 - `merge(options: MergeOptions): Promise<MergeResult>`
+
+#### Monitoring
+- `getMetrics(): { queries, errors, performance }`
+- `getCacheStats(): { size, maxSize, enabled, ttl }`
 
 #### Advanced Operations
 - `batchInsert(table: string, rows: Record<string, any>[]): Promise<any>`

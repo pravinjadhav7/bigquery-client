@@ -73,6 +73,36 @@ describe('BigQueryClient', () => {
         });
     });
 
+    describe('getMetrics and getCacheStats', () => {
+        it('should expose query metrics collected by query()', async () => {
+            mockBigQuery.queueQueryResult([{ a: 1 }], { totalBytesProcessed: '10' });
+            await client.query('SELECT 1');
+            mockBigQuery.queueQueryError(new Error('boom'));
+            await expect(client.query('SELECT 2')).rejects.toThrow();
+
+            const metrics = client.getMetrics();
+
+            expect(metrics.queries).toHaveLength(1);
+            expect(metrics.queries[0]).toMatchObject({ rowsAffected: 1, cacheHit: false });
+            expect(metrics.errors).toHaveLength(1);
+            expect(metrics.performance).toEqual(expect.objectContaining({
+                averageExecutionTime: expect.any(Number),
+                totalBytesProcessed: expect.any(Number)
+            }));
+        });
+
+        it('should expose cache statistics', async () => {
+            const cached = new BigQueryClient({
+                projectId: 'p', datasetId: 'd', enableCache: true, cacheTtl: 1000, cacheMaxSize: 5
+            });
+            mockBigQuery.queueQueryResult([{ a: 1 }]);
+            await cached.query('SELECT 1');
+
+            expect(cached.getCacheStats()).toEqual({ size: 1, maxSize: 5, enabled: true, ttl: 1000 });
+            expect(client.getCacheStats()).toMatchObject({ size: 0, enabled: false });
+        });
+    });
+
     describe('Materialized Views', () => {
         it('should create materialized view', async () => {
             const config = {

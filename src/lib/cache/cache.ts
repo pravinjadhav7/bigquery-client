@@ -206,13 +206,13 @@ export class QueryCache {
   /**
    * Gets current cache statistics for monitoring and debugging
    * 
-   * @returns {object} Cache statistics including size, hit rate, and memory usage
+   * @returns {object} Cache statistics: size, maxSize, enabled and ttl
    * 
    * @example
    * ```typescript
    * const stats = cache.getStats();
    * console.log(`Cache size: ${stats.size}/${stats.maxSize}`);
-   * console.log(`Memory usage: ${stats.memoryUsage} bytes`);
+   * console.log(`Enabled: ${stats.enabled}, TTL: ${stats.ttl} ms`);
    * ```
    */
   getStats(): { size: number; maxSize: number; enabled: boolean; ttl: number } {
