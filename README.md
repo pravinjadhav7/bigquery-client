@@ -163,6 +163,9 @@ const result = await client.insert({
   }]
 });
 
+// By default a failed insert resolves with { success: false, message: 'Insert failed', affectedRows: 0 }
+// (the error is logged when enableLogging is on). Pass throwOnError: true to rethrow it instead.
+
 // Bulk insert
 const bulkResult = await client.insert({
   table: 'events',

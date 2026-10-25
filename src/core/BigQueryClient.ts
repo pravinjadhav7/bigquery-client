@@ -75,6 +75,8 @@ interface InsertOptions {
     table: string;
     /** Array of row objects to insert */
     rows: Record<string, any>[];
+    /** Rethrow insert errors instead of returning `success: false` (default: false) */
+    throwOnError?: boolean;
 }
 
 /**
@@ -537,18 +539,16 @@ export class BigQueryClient {
     }
 
     /**
-     * Inserts multiple rows into a BigQuery table with automatic validation
+     * Inserts rows into a BigQuery table using a single parameterized INSERT statement.
      * 
-     * This method provides a safe and efficient way to insert data with:
-     * - Automatic SQL injection protection
-     * - Batch processing for multiple rows
-     * - Schema validation
-     * - Error handling and logging
-     * - Transaction-like behavior
+     * By default errors are swallowed: a failed insert resolves with
+     * `{ success: false, message: 'Insert failed', affectedRows: 0 }` and the error is
+     * recorded through the Logger (when `enableLogging` is on). Pass `throwOnError: true`
+     * to have the original error rethrown instead.
      * 
-     * @param {InsertOptions} options - Configuration object containing table and row data
+     * @param {InsertOptions} options - Table, rows and optional `throwOnError`
      * @returns {Promise<{success: boolean, message: string, affectedRows: number}>} Promise resolving to insert results
-     * @throws {BigQueryError} When validation fails or insert operation encounters errors
+     * @throws The underlying error, only when `throwOnError` is true
      * 
      * @example
      * ```typescript
@@ -577,6 +577,7 @@ export class BigQueryClient {
      * ```
      */
     async insert(options: InsertOptions): Promise<{ success: boolean; message: string; affectedRows: number }> {
+        const throwOnError = options?.throwOnError === true;
         try {
             const { table, rows } = options;
             const qb = new QueryBuilder(this.formatTableName(table));
@@ -591,6 +592,7 @@ export class BigQueryClient {
 
         } catch (error) {
             this.logger.logError(error as Error);
+            if (throwOnError) throw error;
             return { success: false, message: "Insert failed", affectedRows: 0 };
         }
     }

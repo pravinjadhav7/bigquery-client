@@ -260,6 +260,33 @@ describe('BigQueryClient', () => {
             expect(result).toEqual({ success: false, message: 'Insert failed', affectedRows: 0 });
         });
 
+        it('should log a swallowed insert error through the Logger', async () => {
+            const loggingClient = new BigQueryClient({ projectId: 'test-project', datasetId: 'test-dataset', enableLogging: true });
+            jest.spyOn(console, 'error').mockImplementation(() => undefined);
+            mockBigQuery.queueQueryError(new Error('quota exceeded'));
+
+            const result = await loggingClient.insert({ table: 'users', rows: [{ user_id: 1 }] });
+
+            expect(result.success).toBe(false);
+            expect((loggingClient as any).logger.getLogs().map((l: any) => l.error?.message)).toContain('quota exceeded');
+        });
+
+        it('should rethrow the insert error when throwOnError is true', async () => {
+            mockBigQuery.queueQueryError(new Error('quota exceeded'));
+
+            await expect(
+                client.insert({ table: 'users', rows: [{ user_id: 1 }], throwOnError: true })
+            ).rejects.toThrow('quota exceeded');
+        });
+
+        it('should still return success:false when throwOnError is explicitly false', async () => {
+            mockBigQuery.queueQueryError(new Error('quota exceeded'));
+
+            const result = await client.insert({ table: 'users', rows: [{ user_id: 1 }], throwOnError: false });
+
+            expect(result).toEqual({ success: false, message: 'Insert failed', affectedRows: 0 });
+        });
+
         it('should execute a delete query and report the affected rows from job statistics', async () => {
             mockBigQuery.queueJobStatistics({ query: { numDmlAffectedRows: '2' } });
 
