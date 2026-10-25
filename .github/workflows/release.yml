@@ -1,0 +1,50 @@
+name: Release
+
+# Runs on every push to main. semantic-release reads the conventional commit
+# messages since the last tag (fix: -> patch, feat: -> minor, BREAKING CHANGE -> major),
+# and only when one of them warrants a release does it bump the version, publish to
+# npm, tag, and create the GitHub release. chore:/docs:/test: alone publish nothing.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release:
+    name: Test, build and release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Run Tests
+        run: npm test
+
+      - name: Run Build
+        run: npm run build
+
+      - name: Release
+        run: npx semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
