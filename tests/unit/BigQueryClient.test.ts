@@ -388,6 +388,47 @@ describe('BigQueryClient', () => {
             });
         });
 
+        it('should give users and units distinct aliases', async () => {
+            await client.select({
+                table: 'users',
+                columns: { users: ['id', 'COUNT(id) AS n'], units: ['name'] },
+                joins: [{ table: 'units', on: { 'users.unit_id': 'units.id' } }],
+                where: { 'units.name': 'a' },
+                groupBy: ['users.id', 'units.name'],
+                orderBy: [{ column: 'units.name' }]
+            });
+
+            expect(mockBigQuery.lastQuery()).toMatchObject({
+                sql:
+                    `SELECT u.id, COUNT(u.id) AS n, u2.name FROM ${T('users')} AS u ` +
+                    `INNER JOIN ${T('units')} AS u2 ON u.unit_id = u2.id WHERE u2.name = ? ` +
+                    `GROUP BY u.id, u2.name ORDER BY u2.name ASC`,
+                params: ['a']
+            });
+        });
+
+        it('should keep aliases unique when three tables share a first letter', async () => {
+            await client.select({
+                table: 'users',
+                columns: { users: ['id'], units: ['id'], uploads: ['id'] },
+                joins: [
+                    { table: 'units', on: { 'users.unit_id': 'units.id' } },
+                    { table: 'uploads', on: { 'users.id': 'uploads.user_id' } }
+                ]
+            });
+
+            expect(mockBigQuery.lastQuery()?.sql).toContain('SELECT u.id, u2.id, u3.id FROM');
+            expect(mockBigQuery.lastQuery()?.sql).toContain(`AS u2 ON u.unit_id = u2.id`);
+            expect(mockBigQuery.lastQuery()?.sql).toContain(`AS u3 ON u.id = u3.user_id`);
+        });
+
+        it('should reject columns keyed by a table that is neither the main table nor joined', async () => {
+            await expect(
+                client.select({ table: 'users', columns: { orders: ['id'] } })
+            ).rejects.toThrow(/Unknown table "orders"/);
+            expect(mockBigQuery.calls).toHaveLength(0);
+        });
+
         const threeTable = (type?: 'LEFT' | 'RIGHT' | 'FULL') => ({
             table: 'users',
             columns: {

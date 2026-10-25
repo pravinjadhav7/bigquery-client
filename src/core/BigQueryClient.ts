@@ -209,6 +209,22 @@ export class BigQueryClient {
     }
 
     /**
+     * Assigns one unique alias per table: the first letter of the name, with a numeric
+     * suffix on collision (users, units → u, u2). Comparison is case-insensitive because
+     * BigQuery aliases are.
+     */
+    private assignTableAliases(tables: string[]): string[] {
+        const used = new Set<string>();
+        return tables.map(name => {
+            const base = /^[A-Za-z_]/.test(name) ? name[0] : 't';
+            let alias = base;
+            for (let n = 2; used.has(alias.toLowerCase()); n++) alias = `${base}${n}`;
+            used.add(alias.toLowerCase());
+            return alias;
+        });
+    }
+
+    /**
      * Formats a table name to include the full BigQuery path
      * 
      * @private
@@ -398,8 +414,10 @@ export class BigQueryClient {
         try {
             const { table, columns = {}, joins = [], where, groupBy, orderBy, limit, offset } = options;
 
-            // Generate alias for the main table (e.g., users → u)
-            const mainAlias = table[0]; // First letter aliasing
+            // Assign a unique alias to the main table and every joined table up front
+            // (users → u, units → u2), so column mapping can resolve any of them.
+            const aliases = this.assignTableAliases([table, ...joins.map(j => j.table)]);
+            const mainAlias = aliases[0];
             const formattedMainTable = `${this.formatTableName(table)} AS ${mainAlias}`;
 
             // Initialize QueryBuilder
@@ -407,11 +425,20 @@ export class BigQueryClient {
 
             // Store table aliases
             const aliasMap: Record<string, string> = { [table]: mainAlias };
+            joins.forEach((join, i) => {
+                if (!(join.table in aliasMap)) aliasMap[join.table] = aliases[i + 1];
+            });
 
             // Normalize columns: Convert array format to object format if necessary
             const normalizedColumns = Array.isArray(columns)
                 ? { [table]: columns }
                 : columns;
+
+            const resolveAlias = (tableRef: string): string => {
+                const alias = aliasMap[tableRef];
+                if (!alias) throw new Error(`Unknown table "${tableRef}" in columns: it must be the main table or a joined table.`);
+                return alias;
+            };
 
             // Handle column selection with correct table aliasing
             const selectedColumns = Object.entries(normalizedColumns).flatMap(([tableRef, cols]) =>
@@ -427,7 +454,7 @@ export class BigQueryClient {
             
                             if (AGGREGATE_FUNCTIONS.has(funcName)) {
                                 // Ensure table alias is applied correctly
-                                const formattedColumn = columnName === "*" ? "*" : `${aliasMap[tableRef] || tableRef[0]}.${columnName}`;
+                                const formattedColumn = columnName === "*" ? "*" : `${resolveAlias(tableRef)}.${columnName}`;
             
                                 // If no alias is provided, generate a meaningful alias
                                 if (!userDefinedAlias) {
@@ -439,7 +466,7 @@ export class BigQueryClient {
                         }
             
                         // Apply table alias for regular columns
-                        return `${aliasMap[tableRef] || tableRef[0]}.${col}`;
+                        return `${resolveAlias(tableRef)}.${col}`;
                     })
                     : []
             );
@@ -447,14 +474,13 @@ export class BigQueryClient {
             qb.select(selectedColumns);
 
             // Process joins with correct aliasing
-            for (const join of joins) {
-                const joinAlias = join.table[0]; // Generate alias (e.g., orders → o)
-                aliasMap[join.table] = joinAlias;
+            for (const [i, join] of joins.entries()) {
+                const joinAlias = aliases[i + 1];
 
                 // Proper join condition references
                 const joinCondition = Object.entries(join.on).reduce((acc, [left, right]) => {
                     const leftAlias = aliasMap[left.split('.')[0]] || mainAlias;
-                    const rightAlias = aliasMap[join.table] || joinAlias;
+                    const rightAlias = joinAlias;
                     return { ...acc, [`${leftAlias}.${left.split('.').pop()}`]: `${rightAlias}.${right.split('.').pop()}` };
                 }, {});
 
